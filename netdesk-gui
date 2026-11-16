@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+project_dir=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
+exec "$project_dir/.netdesk-venv/bin/python" "$project_dir/netdesk_gui.py" "$@"

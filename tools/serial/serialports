@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+
+# List only USB serial devices that are connected right now.  Onboard UARTs
+# (/dev/ttyS*) are deliberately excluded because their device nodes do not
+# indicate that a cable or switch is connected.
+
+case "${1:-}" in
+    connect|open)
+        shift
+        exec "$(dirname -- "$(readlink -f -- "$0")")/serialconnect" "$@"
+        ;;
+    log|record)
+        shift
+        exec "$(dirname -- "$(readlink -f -- "$0")")/serialconnect" --log "$@"
+        ;;
+    session)
+        exec "$(dirname -- "$(readlink -f -- "$0")")/serialportsconnect"
+        ;;
+    help|-h|--help)
+        cat <<'EOF'
+Usage:
+  serialports                 List connected USB serial cables
+  serialports connect         Open the cable in this terminal (defaults to 9600 baud)
+  serialports connect 115200  Open the cable at 115200 baud
+  serialports log             Open the cable and save a serial log to ~/serial-logs
+  serialports log 115200      Log a cable using 115200 baud
+  serialports session         Start the guided serial-session wizard
+EOF
+        exit 0
+        ;;
+    '') ;;
+    *)
+        printf 'Unknown option: %s\nRun: serialports help\n' "$1" >&2
+        exit 2
+        ;;
+esac
+
+shopt -s nullglob
+devices=(/dev/ttyUSB* /dev/ttyACM*)
+
+if ((${#devices[@]} == 0)); then
+    echo "No USB serial device detected."
+    echo "Connect the console cable, wait a moment, and run: serialports"
+    exit 1
+fi
+
+for device in "${devices[@]}"; do
+    vendor=""
+    model=""
+    database_vendor=""
+    database_model=""
+    usb_path=""
+
+    while IFS='=' read -r key value; do
+        case "$key" in
+            ID_VENDOR) vendor=${value//_/ } ;;
+            ID_MODEL) model=${value//_/ } ;;
+            ID_VENDOR_FROM_DATABASE) database_vendor=$value ;;
+            ID_MODEL_FROM_DATABASE) database_model=$value ;;
+            ID_PATH) usb_path=$value ;;
+        esac
+    done < <(udevadm info --query=property --name="$device" 2>/dev/null)
+
+    description="${database_vendor:-$vendor} ${database_model:-$model}"
+    description=${description# }
+    description=${description% }
+    [[ -n "$description" ]] || description="USB serial device"
+
+    if [[ -r "$device" && -w "$device" ]]; then
+        access="ready"
+    else
+        access="permission denied; log out and back in"
+    fi
+
+    printf '%s  %s  [%s]\n' "$device" "$description" "$access"
+
+    if [[ -d /dev/serial/by-id ]]; then
+        for stable_name in /dev/serial/by-id/*; do
+            [[ $(readlink -f -- "$stable_name") == "$device" ]] || continue
+            printf '  stable name: %s\n' "$stable_name"
+        done
+    fi
+
+    [[ -n "$usb_path" ]] && printf '  physical USB path: %s\n' "$usb_path"
+done
+
+printf '\nTo open this cable in this terminal, run: serialports connect\n'
+printf 'For a different speed, for example: serialports connect 115200\n'
+printf 'To record a full serial log, run: serialports log\n'
+printf 'For the guided session wizard (with or without logging), run: serialportsconnect\n'

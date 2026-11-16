@@ -1,0 +1,90 @@
+{
+  "format": "netdesk-plan",
+  "version": 1,
+  "jobs": [
+    {
+      "id": "1647c6797479456b91005e24311825e6",
+      "scenario": "Branch office",
+      "device": {
+        "name": "192.0.2.10",
+        "ip": "192.0.2.10",
+        "device_type": "huawei",
+        "port": 22
+      },
+      "credential_group": "Branch shared",
+      "preset": "quick",
+      "commands": [
+        "display version",
+        "display interface brief",
+        "display ip routing-table",
+        "display lldp neighbor"
+      ]
+    },
+    {
+      "id": "05e879bfe1c74f3e843fb77df92f6510",
+      "scenario": "Branch office",
+      "device": {
+        "name": "192.0.2.11",
+        "ip": "192.0.2.11",
+        "device_type": "huawei",
+        "port": 22
+      },
+      "credential_group": "Branch shared",
+      "preset": "quick",
+      "commands": [
+        "display version",
+        "display interface brief",
+        "display ip routing-table",
+        "display lldp neighbor"
+      ]
+    },
+    {
+      "id": "a4d8f8e4b39341de9e1beb64f5bb4024",
+      "scenario": "Branch office",
+      "device": {
+        "name": "192.0.2.12",
+        "ip": "192.0.2.12",
+        "device_type": "huawei",
+        "port": 22
+      },
+      "credential_group": "Branch individual",
+      "preset": "quick",
+      "commands": [
+        "display version",
+        "display interface brief",
+        "display ip routing-table",
+        "display lldp neighbor"
+      ]
+    },
+    {
+      "id": "6a8e496594cc4526b78fddfd15b365fa",
+      "scenario": "Core switches",
+      "device": {
+        "name": "198.51.100.10",
+        "ip": "198.51.100.10",
+        "device_type": "cisco_ios",
+        "port": 22
+      },
+      "credential_group": "Core shared",
+      "preset": "config",
+      "commands": [
+        "show running-config"
+      ]
+    },
+    {
+      "id": "844fd1a17541481d922afafe998bdcff",
+      "scenario": "Core switches",
+      "device": {
+        "name": "198.51.100.11",
+        "ip": "198.51.100.11",
+        "device_type": "cisco_ios",
+        "port": 22
+      },
+      "credential_group": "Core shared",
+      "preset": "config",
+      "commands": [
+        "show running-config"
+      ]
+    }
+  ]
+}

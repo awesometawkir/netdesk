@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+project_dir=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
+python_bin="$project_dir/.netdesk-venv/bin/python"
+if [[ ! -x "$python_bin" ]]; then
+    printf 'NetDesk environment missing. Run: %s/install.sh\n' "$project_dir" >&2
+    exit 1
+fi
+exec "$python_bin" "$project_dir/netdesk.py" "$@"

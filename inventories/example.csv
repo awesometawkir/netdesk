@@ -1,0 +1,3 @@
+name,ip,device_type,port
+example-switch,192.0.2.10,huawei,22
+example-router,192.0.2.11,cisco_ios,22

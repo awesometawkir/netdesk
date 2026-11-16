@@ -1,0 +1,22 @@
+.venv/
+.netdesk-venv/
+__pycache__/
+*.pyc
+logs/
+inventories/*.csv
+!inventories/example.csv
+
+plans/*.json
+
+# Local legacy files contain the original private inventory or site context.
+backup.py
+sanitize.py
+sanitize_txt.py
+legacy/
+AGENTS.md
+.env
+.env.*
+*.log
+*.pem
+*.key
+.pytest_cache/

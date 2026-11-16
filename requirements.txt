@@ -1,0 +1,5 @@
+netmiko>=4.4,<5
+rich>=13,<15
+pyserial>=3.5,<4
+
+PySide6>=6.8,<7

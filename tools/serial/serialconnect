@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# Open a USB serial console in this terminal with common console defaults.
+# Usage: serialconnect [--log] [baud-rate]
+
+set -u
+
+log_mode=false
+if [[ ${1:-} == --log ]]; then
+    log_mode=true
+    shift
+fi
+
+if (($# > 1)); then
+    printf 'Usage: serialconnect [--log] [baud-rate]\nExample: serialconnect --log 115200\n' >&2
+    exit 2
+fi
+
+speed=${1:-9600}
+if [[ ! $speed =~ ^[0-9]+$ ]] || ((speed < 300 || speed > 4000000)); then
+    printf 'Baud rate must be a number, for example: serialconnect 115200\n' >&2
+    exit 2
+fi
+
+shopt -s nullglob
+ports=(/dev/ttyUSB* /dev/ttyACM*)
+
+if ((${#ports[@]} == 0)); then
+    printf 'No USB serial device is connected.\n'
+    printf 'Plug in the cable, wait a moment, then run serialports to check it.\n'
+    exit 1
+fi
+
+printf 'Connected USB serial devices:\n'
+for index in "${!ports[@]}"; do
+    port=${ports[index]}
+    description=$(udevadm info --query=property --name="$port" 2>/dev/null |
+        awk -F= '/^ID_VENDOR_FROM_DATABASE=/{vendor=$2} /^ID_MODEL_FROM_DATABASE=/{model=$2} END {print vendor " " model}')
+    description=${description# }
+    description=${description% }
+    [[ -n $description ]] || description="USB serial device"
+    printf '  %d) %s — %s\n' "$((index + 1))" "$port" "$description"
+done
+
+choice=1
+read -r -p "Choose the port to connect [1-${#ports[@]}] (default 1): " choice
+choice=${choice:-1}
+if [[ ! $choice =~ ^[0-9]+$ ]] || ((choice < 1 || choice > ${#ports[@]})); then
+    printf 'That is not a valid port choice.\n' >&2
+    exit 2
+fi
+
+port=${ports[choice - 1]}
+
+if [[ ! -r $port || ! -w $port ]]; then
+    printf 'You do not have access to %s. Log out and back in, then try again.\n' "$port" >&2
+    exit 1
+fi
+
+picocom_args=(--baud "$speed" --databits 8 --parity n --stopbits 1 --flow n)
+
+if [[ $log_mode == true ]]; then
+    umask 077
+    log_dir="$HOME/serial-logs"
+    mkdir -p -m 700 -- "$log_dir"
+
+    default_log="serial-$(date +%Y%m%d-%H%M%S).log"
+    while :; do
+        read -r -p "Log filename (saved in ~/serial-logs; default ${default_log}): " log_name
+        log_name=${log_name:-$default_log}
+        [[ $log_name == *.log ]] || log_name+=".log"
+
+        if [[ $log_name == */* || ! $log_name =~ ^[[:alnum:]][[:alnum:]._-]*$ ]]; then
+            printf 'Use a simple filename: letters, numbers, dots, dashes, and underscores only.\n' >&2
+            continue
+        fi
+        break
+    done
+
+    log_file="$log_dir/$log_name"
+    legacy_timing_file="${log_file%.log}.timing"
+    if [[ -e $log_file ]]; then
+        printf '\nA log with that name already exists:\n  %s\n' "$log_file"
+        printf '  1) Replace it (default)\n'
+        printf '  2) Append a new session to it\n'
+        printf '  3) Cancel\n'
+        read -r -p 'Choose [1-3]: ' existing_file_action
+        case "${existing_file_action:-1}" in
+            1)
+                : > "$log_file"
+                # Older versions created a timing sidecar. Remove it when the
+                # user explicitly replaces this session log.
+                [[ ! -e $legacy_timing_file ]] || rm -- "$legacy_timing_file"
+                ;;
+            2) ;;
+            3)
+                printf 'No log was started.\n'
+                exit 0
+                ;;
+            *)
+                printf 'That is not a valid choice. No log was started.\n' >&2
+                exit 2
+                ;;
+        esac
+    fi
+
+    {
+        printf '\n===== Serial session started %s =====\n' "$(date --iso-8601=seconds)"
+        printf 'Port: %s | Speed: %s baud | Format: 8N1 | Flow control: none\n' "$port" "$speed"
+        printf 'Log contents: raw device output (PuTTY-style; passwords excluded)\n'
+        printf '================================================\n'
+    } >> "$log_file"
+    printf 'Recording the serial session to: %s\n' "$log_file"
+    # Picocom records the serial device stream only. This is the same clean
+    # model as a standard PuTTY session log: device prompts, echoed commands,
+    # and responses appear once; locally typed passwords are not written.
+    picocom_args+=(--logfile "$log_file")
+fi
+
+printf 'Connecting to %s at %s baud (8N1, no flow control)…\n' "$port" "$speed"
+printf 'To leave the serial console, press Ctrl+A, then Ctrl+X.\n\n'
+if [[ $log_mode == true ]]; then
+    picocom "${picocom_args[@]}" "$port"
+    picocom_status=$?
+    if ((picocom_status == 0)); then
+        {
+            printf '\n===== Serial session ended %s =====\n' "$(date --iso-8601=seconds)"
+        } >> "$log_file"
+        printf 'Log saved: %s\n' "$log_file"
+    else
+        printf 'The serial connection did not open; no device session was recorded.\n' >&2
+    fi
+    exit "$picocom_status"
+fi
+
+exec picocom "${picocom_args[@]}" "$port"
