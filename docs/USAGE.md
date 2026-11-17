@@ -1,5 +1,13 @@
 # Usage guide
 
+## Quickly add ranges with separate logins
+
+**Collections → Add ranges & logins** opens a table with two initial rows. Enter an IP, inclusive range, subnet or list in each row, then that row's username and password. Every row can choose its own platform, preset and port. Add more rows as needed. Click the row number at the left to select rows for removal.
+
+By default credentials are independent. The optional shared-login checkbox makes all rows use the first row's credentials; turning it off restores the individual fields. Incomplete or invalid rows are reported before anything is added or connected. Entirely blank rows are ignored.
+
+**Add all ranges to collection** expands the addresses and creates distinct groups without overwriting existing credentials. Review the expanded device list and click **Collect all devices** to run. For custom commands, use the existing scenario editor or select added devices and choose **Edit commands**.
+
 ## Plans, credentials and selection
 
 A plan contains one or more scenarios. Each expanded device becomes a job with its own command list and login-group name. Multiple devices may share one group, or each may have its own. Updating a named group changes the login for all devices using it. When selecting only part of a shared group, the GUI suggests a new group to keep the other devices unchanged.

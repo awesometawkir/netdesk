@@ -210,6 +210,130 @@ class ScenarioDialog(QDialog):
             message(self, error)
 
 
+class RangesDialog(QDialog):
+    """One visible row per address set, with independent runtime credentials."""
+    def __init__(self, existing_jobs=(), existing_groups=(), parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('Add IP ranges with separate logins')
+        self.resize(1100, 470)
+        self.existing_jobs = list(existing_jobs)
+        self.existing_groups = set(existing_groups)
+        self.jobs, self.credentials = [], {}
+        layout = QVBoxLayout(self)
+        layout.addWidget(hint('Each row is a separate range or single IP with its own login. Add as many rows as you need, then collect them together.'))
+        self.rows = QTableWidget(0, 6)
+        self.rows.setHorizontalHeaderLabels(['IP / range / subnet', 'Username', 'Password', 'Platform', 'Preset', 'Port'])
+        self.rows.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.rows.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.rows.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
+        self.rows.setColumnWidth(5, 85)
+        self.rows.verticalHeader().setDefaultSectionSize(44)
+        layout.addWidget(self.rows, 1)
+        controls = QHBoxLayout()
+        controls.addWidget(button('＋ Add another row', self.add_row))
+        controls.addWidget(button('Remove selected rows', self.remove_rows))
+        self.shared = QCheckBox('Use the first row’s username and password for every row')
+        self.shared.toggled.connect(self.update_shared)
+        controls.addWidget(self.shared)
+        controls.addStretch()
+        layout.addLayout(controls)
+        layout.addWidget(hint('Examples: 192.168.1.1-10, 192.168.10.1-15, or one IP such as 10.0.0.5. Passwords are masked and never saved in plans. Use Add scenario for custom command lists.'))
+        self.error = QLabel('')
+        self.error.setWordWrap(True)
+        self.error.setStyleSheet('color: #a12b25;')
+        layout.addWidget(self.error)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText('Add all ranges to collection')
+        buttons.accepted.connect(self.submit)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.add_row()
+        self.add_row()
+
+    def add_row(self):
+        row = self.rows.rowCount()
+        self.rows.insertRow(row)
+        targets, username, password = QLineEdit(), QLineEdit(), QLineEdit()
+        targets.setPlaceholderText('IP or range, e.g. 192.168.1.1-10')
+        password.setEchoMode(QLineEdit.EchoMode.Password)
+        password.setPlaceholderText('Password for this row')
+        platform = combo(list(n.PRESETS))
+        presets = combo(n.available_presets(['huawei']))
+        def update_presets():
+            previous = presets.currentText()
+            presets.clear()
+            presets.addItems(n.available_presets([platform.currentText()]))
+            presets.setCurrentText(previous if presets.findText(previous) >= 0 else 'quick')
+        def show_commands():
+            if presets.currentText():
+                presets.setToolTip('\n'.join(n.get_commands(platform.currentText(), presets.currentText())))
+        platform.currentTextChanged.connect(update_presets)
+        presets.currentTextChanged.connect(show_commands)
+        for column, widget in enumerate((targets, username, password, platform, presets, spin(1, 65535, 22))):
+            self.rows.setCellWidget(row, column, widget)
+        show_commands()
+        self.update_shared()
+
+    def update_shared(self):
+        for row in range(self.rows.rowCount()):
+            for column in (1, 2):
+                self.rows.cellWidget(row, column).setEnabled(row == 0 or not self.shared.isChecked())
+
+    def remove_rows(self):
+        for row in sorted({index.row() for index in self.rows.selectionModel().selectedRows()}, reverse=True):
+            self.rows.removeRow(row)
+        if not self.rows.rowCount():
+            self.add_row()
+        self.update_shared()
+
+    def build(self):
+        jobs, vault = [], {}
+        used_names = {j['scenario'] for j in self.existing_jobs}
+        used_groups = self.existing_groups | {j['credential_group'] for j in self.existing_jobs}
+        count = 1
+        first_group = None
+        for row in range(self.rows.rowCount()):
+            targets = self.rows.cellWidget(row, 0).text().strip()
+            own_user = self.rows.cellWidget(row, 1).text().strip()
+            own_password = self.rows.cellWidget(row, 2).text()
+            if not targets:
+                if own_user or own_password:
+                    raise ValueError(f'Row {row + 1}: enter the IP or range for this login.')
+                continue
+            credential_row = 0 if self.shared.isChecked() else row
+            username = self.rows.cellWidget(credential_row, 1).text().strip()
+            password = self.rows.cellWidget(credential_row, 2).text()
+            if not username or not password:
+                raise ValueError(f'Row {row + 1}: enter both a username and password' + (' in the first row.' if self.shared.isChecked() else '.'))
+            while f'Range {count}' in used_names or f'Range {count} login' in used_groups:
+                count += 1
+            name = f'Range {count}'
+            group = first_group if self.shared.isChecked() and first_group else name + ' login'
+            try:
+                new_jobs = batch.make_jobs(name, targets, self.rows.cellWidget(row, 3).currentText(),
+                                          self.rows.cellWidget(row, 5).value(), self.rows.cellWidget(row, 4).currentText(),
+                                          credential_group=group)
+            except ValueError as error:
+                raise ValueError(f'Row {row + 1}: {error}') from error
+            jobs.extend(new_jobs)
+            vault[group] = (username, password)
+            first_group = first_group or group
+            used_names.add(name)
+            used_groups.add(group)
+            count += 1
+        if not jobs:
+            raise ValueError('Enter at least one IP or range and its login.')
+        batch.validate_jobs(self.existing_jobs + jobs)
+        return jobs, vault
+
+    def submit(self):
+        try:
+            self.jobs, self.credentials = self.build()
+            self.accept()
+        except (ValueError, KeyError, TypeError) as error:
+            self.error.setText(str(error))
+
+
 class LoginDialog(QDialog):
     def __init__(self, vault, default, parent=None):
         super().__init__(parent)
@@ -291,10 +415,14 @@ class MainWindow(QMainWindow):
         self.count.setMinimumWidth(230)
         row.addWidget(self.count)
         layout.addLayout(row)
-        layout.addWidget(hint('Add IP ranges or individual devices. Assign one login to a group, or select a single device to give it a different login.'))
+        quick = QHBoxLayout()
+        self.ranges_btn = button('＋ Add ranges && logins', self.add_ranges, True)
+        quick.addWidget(self.ranges_btn)
+        quick.addWidget(hint('Each range or single IP can have its own username and password.'), 1)
+        layout.addLayout(quick)
         toolbar = QHBoxLayout()
-        self.edit_buttons = []
-        for text, callback, primary in [('＋ Add scenario', self.add_scenario, True), ('Import inventory', self.import_inventory, False),
+        self.edit_buttons = [self.ranges_btn]
+        for text, callback, primary in [('＋ Add scenario', self.add_scenario, False), ('Import inventory', self.import_inventory, False),
                                         ('Assign login', self.assign_login, False), ('Edit commands', self.edit_commands, False),
                                         ('Remove selected', self.remove_selected, False), ('Save plan', self.save_plan, False), ('Load plan', self.load_plan, False)]:
             control = button(text, callback, primary)
@@ -312,7 +440,7 @@ class MainWindow(QMainWindow):
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.cellDoubleClicked.connect(lambda _r, _c: self.assign_login() if not self.busy else None)
         layout.addWidget(self.table, 1)
-        self.empty = hint('Start with “Add scenario”. Example: Branch A → 192.168.1.10-20 → one shared login. Add Branch B with another login, then collect both together.')
+        self.empty = hint('Start with “Add ranges & logins”. Enter each IP range and its own username/password, then collect all rows together.')
         layout.addWidget(self.empty)
         settings = QHBoxLayout()
         self.workers = spin(1, 16, 4)
@@ -384,6 +512,15 @@ class MainWindow(QMainWindow):
         self.jobs.extend(dialog.jobs)
         self.dirty = True
         self.refresh_table()
+
+    def add_ranges(self):
+        dialog = RangesDialog(self.jobs, self.vault, self)
+        if dialog.exec():
+            self.jobs.extend(dialog.jobs)
+            self.vault.update(dialog.credentials)
+            self.dirty = True
+            self.refresh_table()
+            self.statusBar().showMessage(f'Added {len(dialog.jobs)} device jobs with {len(dialog.credentials)} login groups. Review and click Collect all devices.')
 
     def add_scenario(self):
         dialog = ScenarioDialog(self.vault, parent=self)

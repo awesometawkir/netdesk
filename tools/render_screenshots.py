@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from PySide6.QtWidgets import QApplication
 import netdesk as n
 import netdesk_batch as b
-from netdesk_gui import MainWindow, ScenarioDialog, STYLE
+from netdesk_gui import MainWindow, ScenarioDialog, RangesDialog, STYLE
 
 root = n.ROOT
 output = root / 'docs' / 'screenshots'
@@ -26,6 +26,14 @@ with tempfile.TemporaryDirectory() as temporary, patch.object(n, 'RUNS', Path(te
     window.show()
     app.processEvents()
     window.grab().save(str(output / 'collections.png'))
+    ranges = RangesDialog(parent=window)
+    for row, (targets, user) in enumerate([('192.0.2.1-10', 'branch-a'), ('198.51.100.1-15', 'branch-b')]):
+        ranges.rows.cellWidget(row, 0).setText(targets)
+        ranges.rows.cellWidget(row, 1).setText(user)
+    ranges.show()
+    app.processEvents()
+    ranges.grab().save(str(output / 'ranges.png'))
+    ranges.reject()
     dialog = ScenarioDialog({}, parent=window)
     dialog.name.setText('Core BGP troubleshooting')
     dialog.targets.setPlainText('198.51.100.10-11')

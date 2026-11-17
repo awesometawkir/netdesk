@@ -13,7 +13,7 @@ from PySide6.QtTest import QTest
 
 import netdesk as n
 import netdesk_batch as b
-from netdesk_gui import MainWindow, ScenarioDialog, STYLE
+from netdesk_gui import MainWindow, ScenarioDialog, RangesDialog, STYLE
 
 
 class GuiTests(unittest.TestCase):
@@ -143,6 +143,74 @@ class GuiTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.window.accept_scenario(dialog)
         self.assertEqual(self.window.vault['Office'], ('old', 'old-secret'))
+
+    def range_dialog(self):
+        dialog = RangesDialog(parent=self.window)
+        for row, (targets, user, password) in enumerate([
+                ('192.0.2.1-10', 'range-a-user', 'range-a-secret'),
+                ('198.51.100.1-15', 'range-b-user', 'range-b-secret')]):
+            for column, text in enumerate((targets, user, password)):
+                dialog.rows.cellWidget(row, column).setText(text)
+        return dialog
+
+    def test_range_rows_send_correct_login_to_all_25_devices(self):
+        dialog = self.range_dialog()
+        dialog.submit()
+        self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted)
+        self.assertEqual(len(dialog.jobs), 25)
+        calls = {}
+        def connect(**kwargs):
+            calls[kwargs['host']] = (kwargs['username'], kwargs['password'])
+            connection = Mock()
+            connection.find_prompt.return_value = '<switch>'
+            connection.send_command.return_value = 'mock output'
+            return connection
+        with patch.object(n, 'ConnectHandler', side_effect=connect):
+            path, result = b.run_batch(dialog.jobs, dialog.credentials, runs_dir=self.root/'runs')
+        self.assertTrue(all(r['status'] == 'ok' for r in result['results']))
+        for number in range(1, 11):
+            self.assertEqual(calls[f'192.0.2.{number}'], ('range-a-user', 'range-a-secret'))
+        for number in range(1, 16):
+            self.assertEqual(calls[f'198.51.100.{number}'], ('range-b-user', 'range-b-secret'))
+        plan = self.root/'ranges.json'
+        b.save_plan(plan, dialog.jobs)
+        for secret in ('range-a-user', 'range-a-secret', 'range-b-user', 'range-b-secret'):
+            self.assertNotIn(secret, plan.read_text())
+            self.assertNotIn(secret, (path/'summary.json').read_text())
+
+    def test_range_shared_login_and_single_ip(self):
+        dialog = self.range_dialog()
+        dialog.rows.cellWidget(1, 0).setText('198.51.100.5')
+        dialog.shared.setChecked(True)
+        jobs, vault = dialog.build()
+        self.assertEqual(len(jobs), 11)
+        self.assertEqual(len(vault), 1)
+        self.assertEqual(len({j['credential_group'] for j in jobs}), 1)
+        self.assertEqual(next(iter(vault.values())), ('range-a-user', 'range-a-secret'))
+        self.assertFalse(dialog.rows.cellWidget(1, 2).isEnabled())
+        dialog.shared.setChecked(False)
+        self.assertEqual(len(dialog.build()[1]), 2)
+        dialog.reject()
+
+    def test_range_groups_never_overwrite_existing_credentials(self):
+        dialog = self.range_dialog()
+        dialog.existing_jobs = b.make_jobs('Range 1', '203.0.113.1', credential_group='Range 1 login')
+        dialog.existing_groups = {'Range 2 login'}
+        jobs, vault = dialog.build()
+        self.assertNotIn('Range 1 login', vault)
+        self.assertNotIn('Range 2 login', vault)
+        self.assertEqual(jobs[0]['scenario'], 'Range 3')
+        dialog.reject()
+
+    def test_range_invalid_row_keeps_dialog_open_without_partial_result(self):
+        dialog = self.range_dialog()
+        dialog.rows.cellWidget(1, 2).clear()
+        dialog.submit()
+        self.assertEqual(dialog.result(), QDialog.DialogCode.Rejected)
+        self.assertIn('Row 2', dialog.error.text())
+        self.assertEqual(dialog.jobs, [])
+        self.assertEqual(dialog.credentials, {})
+        dialog.reject()
 
     def test_original_serial_wizard_launch_remains_available(self):
         with patch('netdesk_gui.shutil.which', return_value='/usr/bin/gnome-terminal'), patch('netdesk_gui.subprocess.Popen') as launch:

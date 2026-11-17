@@ -48,7 +48,23 @@ netdesk --help    # All CLI commands
 
 Existing user-installed serial helpers are preferred. Portable copies are bundled as a fallback, so a fresh installation can use the serial wizard too.
 
-## First collection
+## Ranges with different usernames and passwords
+
+Open **Collections → Add ranges & logins**. Enter one address set per row:
+
+| IP / range | Username | Password |
+| --- | --- | --- |
+| `192.0.2.1-10` | branch-a | Password for the first range |
+| `198.51.100.1-15` | branch-b | Password for the second range |
+| `203.0.113.5` | individual-device | Password for that device |
+
+Each row has its own platform, preset and SSH port. **Add another row** adds more ranges or single IPs. Leave the shared-login checkbox off for different credentials; turn it on to use the first row's username and password for every row.
+
+Click **Add all ranges to collection**, then **Collect all devices**. NetDesk automatically creates independent login groups, keeping existing groups unchanged. Saved plans still omit usernames and passwords.
+
+![Multiple ranges with independent logins](docs/screenshots/ranges.png)
+
+## Advanced scenario setup
 
 1. Open **Collections → Add scenario**.
 2. Name the scenario and enter targets, such as `192.0.2.10-12` or `192.0.2.10,192.0.2.20`.

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Added an **Add ranges & logins** table for multiple IP ranges or single devices, each with its own username/password, platform, preset and port.
+- Added optional shared login across rows, validation before import, and automatic isolated login groups.
+- Verified a 25-device, two-range simulated collection uses the intended credentials for every IP; 39 offline tests pass.
+
 ## 0.1.0 — 2026-11-16
 
 Initial public release.
