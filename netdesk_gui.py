@@ -753,6 +753,7 @@ class MainWindow(QMainWindow):
         title = QLabel('Serial console & recording')
         title.setObjectName('section')
         layout.addWidget(title)
+        layout.addWidget(button('Collect multiple serial ports', self.multi_serial, True))
         layout.addWidget(hint('Use the built-in text console below, or open your original serialportsconnect wizard for a full terminal session.'))
         row = QHBoxLayout()
         self.port = QComboBox()
@@ -795,6 +796,13 @@ class MainWindow(QMainWindow):
         layout.addLayout(row)
         layout.addWidget(hint('Recording saves raw received bytes, including anything the device echoes. Hidden typing only hides the local input field. Use the original wizard for full-screen terminal applications.'))
         self.tabs.addTab(page, 'Serial ports && logs')
+
+    def multi_serial(self):
+        from netdesk_serial_gui import SerialBatchDialog
+        reserved = [self.port.currentText().strip()] if self.serial.isOpen() else []
+        dialog = SerialBatchDialog(reserved, self)
+        dialog.exec()
+        dialog.deleteLater()
 
     def refresh_ports(self):
         current = self.port.currentText()

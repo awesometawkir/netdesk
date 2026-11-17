@@ -83,6 +83,39 @@ Known CLI error patterns are reported as `command_error`. Unrecognized platform-
 
 **History & compare** previews the first 256 KB of a selected file. Open its folder to inspect larger files. Configuration comparison is a raw text diff, including timestamps emitted by a device. Batch comparisons match scenario name, IP, port and platform; keep scenario names stable across runs if you want to compare them.
 
+## Automated multi-port serial collection
+
+The GUI's **Collect multiple serial ports** window creates one collection job per selected serial cable. Each row independently chooses port, baud rate, platform, preset/custom commands and login. The optional shared-login checkbox takes credentials from the first row. Password-only logins can leave the username blank; already-authenticated consoles can leave both blank.
+
+The collector sends a carriage return to wake the console, recognizes common `Username:`, `login:` and `Password:` prompts, and submits each credential at most once. A rejected login or repeated prompt stops that port rather than retrying and risking an account lockout. Device prompts such as `<Huawei>`, `router#`, `router>`, and shell-style `$` prompts are detected, then each command waits for that exact prompt to return. Unrecognized banners, menus, MFA and initial setup are not automated. Privileged commands require an already appropriate login mode; there is no separate enable-password step.
+
+Known platforms receive a session paging command where available. Common `--More--` and similar pagers receive a space. FortiOS paging is handled this way rather than changing persistent console configuration. Custom commands that change the device prompt or request extra confirmation can time out; use an interactive console for them.
+
+Every port runs on a separate worker (maximum 16). Duplicate paths, including aliases resolving to the same port, are rejected. The GUI also rejects its currently open interactive-console port. An exclusive serial lock is requested; close other terminal programs using the cable before starting.
+
+Serial batch output lives in `logs/serial-batches/<run>/`:
+
+- `summary.json` and `summary.csv`: overall results without supplied login credentials.
+- One folder per port: filtered UTF-8 `session.log`, completed command text, per-port results, and a configuration file for recognized successful backup commands.
+- Incomplete command output retains `.partial.txt` and is not promoted to a completed backup.
+
+Unlike interactive raw-byte recording, automated collection filters the supplied username/password from its text transcripts, including values split across reads. Device output can still contain other configuration secrets. Authentication values remain in memory and are cleared from the dialog when it closes.
+
+**Stop collection** stops reads and closes ports promptly, preserving partial files. It does **not** send a remote abort or guarantee that the device stops executing its last command. Timeouts also leave partial output. Per-port failures are isolated. Review the progress/error summary and use **Open this run’s logs** or **All serial collection logs**; these runs are separate from SSH history/comparisons.
+
+CLI options:
+
+```bash
+netdesk serial-collect --ports /dev/ttyUSB0 /dev/ttyUSB1 /dev/ttyUSB2 \
+  --baud 115200 --platform cisco_ios --preset interfaces --individual-logins
+netdesk serial-collect --ports /dev/ttyUSB0 /dev/ttyUSB1 \
+  --commands-file commands.txt --login-timeout 30 --timeout 1200
+```
+
+Without `--individual-logins`, the CLI prompts once and shares the login. The CLI applies one baud/platform/preset to its port list; use the GUI for different per-port settings. `--dry-run` never opens a port. `--diagnostic-timeout` controls recognized long support commands.
+
+Automated behavior is tested with PTY device emulators, not physical hardware. Console syntax, serial adapter behavior, and model-specific presets still require validation on your devices.
+
 ## Serial details
 
 The GUI uses Qt SerialPort, with 8N1 and no flow control. It records received bytes; typed input appears only if echoed by the device. **Hide typing** masks the local input field, not remote echoes. The viewer removes common ANSI sequences but is not a complete terminal emulator. Use the picocom wizard for full terminal handling.

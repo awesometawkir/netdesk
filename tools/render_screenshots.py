@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QApplication
 import netdesk as n
 import netdesk_batch as b
 from netdesk_gui import MainWindow, ScenarioDialog, RangesDialog, STYLE
+from netdesk_serial_gui import SerialBatchDialog
 
 root = n.ROOT
 output = root / 'docs' / 'screenshots'
@@ -18,7 +19,7 @@ output.mkdir(parents=True, exist_ok=True)
 app = QApplication([])
 app.setStyle('Fusion')
 app.setStyleSheet(STYLE)
-with tempfile.TemporaryDirectory() as temporary, patch.object(n, 'RUNS', Path(temporary)):
+with tempfile.TemporaryDirectory() as temporary, patch.object(n, 'RUNS', Path(temporary)), patch.object(n, 'detected_ports', return_value=[]):
     window = MainWindow()
     window.resize(1260, 840)
     window.jobs = b.load_plan(root / 'examples' / 'multi-scenario.json')
@@ -49,6 +50,17 @@ with tempfile.TemporaryDirectory() as temporary, patch.object(n, 'RUNS', Path(te
     window.terminal_output.setPlainText('Serial output appears here after connecting.\n\nType commands or login responses below.\nEnable recording before connecting to save raw device output.\n\nFor your original terminal workflow, choose the serialportsconnect wizard.')
     app.processEvents()
     window.grab().save(str(output / 'serial.png'))
+    multi = SerialBatchDialog(parent=window)
+    while len(multi.entries) < 3:
+        multi.add_row()
+    for index, entry in enumerate(multi.entries):
+        entry['port'].setCurrentText(f'/dev/ttyUSB{index}')
+        entry['username'].setText(f'operator-{index + 1}')
+        entry['preset'].setCurrentText('config')
+    multi.show()
+    app.processEvents()
+    multi.grab().save(str(output / 'multi-serial.png'))
+    multi.close()
     window.dirty = False
     window.close()
 print(f'Saved example screenshots to {output}')

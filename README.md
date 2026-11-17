@@ -106,6 +106,26 @@ netdesk presets --platform huawei
 netdesk collect --targets '192.0.2.10-12' --platform cisco_ios --preset bgp --dry-run
 ```
 
+## Collect several serial devices at once
+
+Open **Serial ports & logs → Collect multiple serial ports**. Add one row for each USB-to-serial cable, for example `/dev/ttyUSB0`, `/dev/ttyUSB1`, and `/dev/ttyUSB2`.
+
+For each row choose the baud rate, platform, and command preset, and enter the login if needed. **View / edit** previews the preset or sets a custom command list. You can use different logins or select **Use first row’s login for every port**.
+
+Click **Collect all serial ports**, review the targets and commands, and start. Up to 16 ports run in parallel, with independent progress and output folders. A failure on one port does not stop the others. Already authenticated consoles can leave login fields blank. The original interactive console remains available.
+
+![Multi-port serial collection](docs/screenshots/multi-serial.png)
+
+```bash
+netdesk serial-collect --ports /dev/ttyUSB0 /dev/ttyUSB1 /dev/ttyUSB2 \
+  --baud 9600 --platform huawei --preset config --individual-logins
+
+# Preview without opening a port:
+netdesk serial-collect --ports /dev/ttyUSB0 /dev/ttyUSB1 --preset quick --dry-run
+```
+
+Output is saved to `logs/serial-batches/<run>/`, including a summary and separate transcripts/command files per port. Automated login supports common username/password prompts and standard device prompts; MFA, separate enable passwords and first-login setup require the interactive console. See [serial collection details](docs/USAGE.md#automated-multi-port-serial-collection).
+
 ## Serial consoles
 
 ![Serial console example preview](docs/screenshots/serial.png)

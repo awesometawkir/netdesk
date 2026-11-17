@@ -22,6 +22,8 @@ QT_QPA_PLATFORM=offscreen .netdesk-venv/bin/python tools/render_screenshots.py
 - `netdesk_batch.py`: saved plan validation, credential-group assignment, concurrent jobs and summaries.
 - `netdesk_presets.py`: platform and scenario command catalog; update the preset reference when editing it.
 - `netdesk_gui.py`: PySide6 desktop UI and serial text console; collection workers communicate through a queue.
+- `netdesk_serial.py`: bounded login/prompt handling and concurrent serial collection; test against PTY emulators.
+- `netdesk_serial_gui.py`: multi-port serial settings and progress window.
 - `tools/serial/`: portable copies of the original terminal serial helpers.
 - `install.sh`, `install-desktop.sh`: environment, launchers and desktop registration.
 

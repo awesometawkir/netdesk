@@ -601,6 +601,17 @@ def main(argv=None):
     ports = sub.add_parser('serialports', help='Run your original serialports helper')
     ports.add_argument('arguments', nargs=argparse.REMAINDER)
     sub.add_parser('serialportsconnect', help='Run your original guided serial logging wizard')
+    serial_batch = sub.add_parser('serial-collect', help='Log in and collect several serial devices in parallel')
+    serial_batch.add_argument('--ports', nargs='+', required=True)
+    serial_batch.add_argument('--baud', type=bounded(300, 4000000), default=9600)
+    serial_batch.add_argument('--platform', choices=list(PRESETS), default='huawei')
+    serial_batch.add_argument('--preset', choices=list(SCENARIOS), default='quick')
+    serial_batch.add_argument('--commands-file', type=Path)
+    serial_batch.add_argument('--individual-logins', action='store_true')
+    serial_batch.add_argument('--login-timeout', type=bounded(1, 300), default=30)
+    serial_batch.add_argument('--timeout', type=bounded(1, 86400), default=1200)
+    serial_batch.add_argument('--diagnostic-timeout', type=bounded(1, 86400), default=7200)
+    serial_batch.add_argument('--dry-run', action='store_true')
     sub.add_parser('ssh', help='Interactive SSH console')
     sub.add_parser('doctor', help='Check setup without making connections')
     sub.add_parser('history', help='List collection runs')
@@ -621,6 +632,9 @@ def main(argv=None):
     diff.add_argument('newer', type=Path)
     args = parser.parse_args(argv)
     try:
+        if args.action == 'serial-collect':
+            from netdesk_serial import cli_collect
+            return cli_collect(args)
         if args.action == 'presets':
             for platform in ([args.platform] if args.platform else PRESETS):
                 console.print(f'\n{PLATFORMS[platform]} ({platform})')

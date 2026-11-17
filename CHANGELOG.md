@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added concurrent serial login and command collection for up to 16 ports, with per-port settings/credentials, presets and custom commands.
+- Added a multi-port GUI and `netdesk serial-collect`, separate output folders, credential-filtered transcripts, partial output, cancellation, and duplicate/busy-port checks.
+- Added virtual-device tests for three concurrent ports, login rejection, pagers, timeout/cancellation, disconnects and GUI progress.
+
 - Added an **Add ranges & logins** table for multiple IP ranges or single devices, each with its own username/password, platform, preset and port.
 - Added optional shared login across rows, validation before import, and automatic isolated login groups.
 - Verified a 25-device, two-range simulated collection uses the intended credentials for every IP; 39 offline tests pass.
