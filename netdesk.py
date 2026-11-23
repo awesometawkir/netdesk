@@ -24,7 +24,9 @@ from rich.console import Console
 from rich.table import Table
 from serial.tools import list_ports
 
-ROOT = Path(__file__).resolve().parent
+from netdesk_paths import data_root, RESOURCE_ROOT
+
+ROOT = data_root()
 RUNS = ROOT / 'logs' / 'netdesk'
 GROUPS = ROOT / 'inventories'
 console = Console(highlight=False, markup=False)
@@ -430,7 +432,8 @@ def compare_runs(old_path, new_path):
 def detected_ports():
     # Ignore the kernel's placeholder ttyS ports; built-in ports can be passed explicitly.
     return sorted((p for p in list_ports.comports() if p.vid is not None or
-                   Path(p.device).name.startswith(('ttyUSB', 'ttyACM'))), key=lambda p: p.device)
+                   Path(p.device).name.startswith(('ttyUSB', 'ttyACM', 'cu.usb', 'tty.usb')) or
+                   re.fullmatch(r'COM[1-9][0-9]*', p.device, re.IGNORECASE)), key=lambda p: p.device)
 
 
 def serial_console(port=None, baud=None, log=None):
@@ -485,7 +488,7 @@ def original_serial_tool(name, *args):
         raise ValueError('Unknown serial helper.')
     helper = Path.home() / '.local' / 'bin' / name
     if not helper.is_file() or not os.access(helper, os.X_OK):
-        helper = ROOT / 'tools' / 'serial' / name
+        helper = RESOURCE_ROOT / 'tools' / 'serial' / name
     if not helper.is_file() or not os.access(helper, os.X_OK):
         raise ValueError(f'Serial helper is missing or not executable: {helper}')
     return subprocess.call([str(helper), *args])

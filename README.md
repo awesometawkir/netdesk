@@ -142,6 +142,54 @@ netdesk serial --port /dev/ttyUSB0 --baud 115200 --log
 
 The GUI/direct-console logs go into `logs/serial/`. The original helpers use `~/serial-logs/`. Picocom exits with **Ctrl+A, then Ctrl+X**. If access is denied, check your serial-port permissions and `dialout` group membership; membership changes require a new login session.
 
+## Auto-open USB serial consoles (Linux)
+
+```bash
+./install-serial-hotplug.sh          # enable for this user
+./install-serial-hotplug.sh --uninstall
+```
+
+You can also use the **Auto-open new USB adapters** checkbox on NetDesk's
+Serial collections page.
+
+A per-user systemd service watches for USB serial adapters. When one is
+plugged in, it opens straight into a "USB Serial Consoles" WezTerm window, and
+you get a desktop notification. Each extra adapter splits the same window into
+another pane. Unplugging an adapter closes its pane. Each pane title shows the
+adapter, port and baud. `Alt+Arrow` moves between panes.
+
+Inside a pane, press `Ctrl+]` and then:
+
+| Key | Action |
+|-----|--------|
+| `q` | close the pane (it stays closed until the adapter is replugged) |
+| `b` | next baud rate: 9600 → 19200 → 38400 → 57600 → 115200 |
+| `k` | send a serial break (ROMMON / password recovery) |
+| `l` | logging on/off |
+| `]` | send a literal Ctrl+] to the device |
+
+Device output is saved under `logs/serial/auto/` (typed input is not logged).
+Settings live in `~/.config/netdesk/serial-hotplug.json` and reload as soon as
+you save the file:
+
+```json
+{
+  "default_baud": 9600,
+  "baud_by_port": {"A10KXYZ": 115200, "10c4:ea60": 19200, "/dev/ttyUSB2": 38400},
+  "notify": true,
+  "log": true
+}
+```
+
+`baud_by_port` keys can be an adapter's USB serial number (it follows that
+cable whatever ttyUSB number it gets), a vendor:product ID (every adapter of
+that model), or a port path. The serial number is checked first.
+
+When NetDesk collects from a port, or opens it in Manual console, that pane
+pauses and then reconnects automatically. Your normal WezTerm windows are never
+touched. NetDesk's Serial collections page adds new adapters as rows on its own
+(one row each), and Remove hides a row until that adapter is replugged.
+
 ## CLI examples
 
 ```bash
@@ -183,3 +231,20 @@ QT_QPA_PLATFORM=offscreen .netdesk-venv/bin/python -m unittest discover -s tests
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the source layout and screenshot workflow. GitHub Actions runs the offline tests on Ubuntu. Licensed under [MIT](LICENSE).
+
+### Portable desktop builds
+
+For self-contained desktop packages, build instructions, supported platform
+boundaries and user-data locations, see [Portable NetDesk](docs/PORTABLE.md).
+The GUI now uses sidebar navigation and a device command inspector. Port and
+other numeric fields always display English digits, regardless of OS locale.
+
+### Automatic serial collections
+
+Open **Serial collections → Automatic collection**. Attached adapters are added
+and refreshed automatically. Check the ports to use, enter per-port or shared
+logins, choose presets/custom commands, and click **Collect selected ports**.
+NetDesk logs in and saves separate transcripts, command outputs and configuration
+backups. Per-row Remove buttons exclude unwanted ports from future scans until
+**Detect / restore ports** is used. The original interactive console is available
+under **Manual console**. See [the serial workflow](docs/PORTABLE.md#automatic-serial-collections).

@@ -224,6 +224,31 @@ PRESETS = {
 }
 
 
+# Focused Huawei collections keep large output opt-in and existing presets intact.
+HUAWEI_FOCUSED = {
+    'config_review': ('Running configuration review', ['display current-configuration']),
+    'port_health': ('Physical port status and error counters', ['display interface brief', 'display interface']),
+    'ip_interfaces': ('Interface IP addresses and protocol status', ['display ip interface brief']),
+    'vlan_ports': ('Port VLAN membership and VLAN inventory', ['display port vlan', 'display vlan']),
+    'mac_table': ('Learned MAC addresses', ['display mac-address']),
+    'spanning_tree': ('Spanning tree port roles and state', ['display stp brief']),
+    'discovery': ('LLDP neighbor summary', ['display lldp neighbor brief']),
+    'arp_table': ('IPv4 neighbor resolution', ['display arp']),
+    'bgp_peers': ('BGP peer session state', ['display bgp peer']),
+    'bgp_routes': ('BGP route inventory', ['display bgp routing-table']),
+    'ospf_peers': ('OSPF neighbor adjacencies', ['display ospf peer']),
+    'ospf_interfaces': ('OSPF enabled interfaces', ['display ospf interface']),
+    'resources': ('CPU and memory utilization', ['display cpu-usage', 'display memory-usage']),
+    'inventory': ('Hardware and VRP software inventory', ['display version', 'display device']),
+    'event_logs': ('Buffered device event logs', ['display logbuffer']),
+    'traps': ('Buffered device traps', ['display trapbuffer']),
+    'time_sync': ('NTP synchronization status', ['display ntp-service status']),
+}
+for _key, (_description, _commands) in HUAWEI_FOCUSED.items():
+    SCENARIOS[_key] = _description
+    PRESETS['huawei'][_key] = _commands
+
+
 def available_presets(platforms):
     """Only expose presets defined for every platform in a mixed inventory."""
     platforms = list(dict.fromkeys(platforms))

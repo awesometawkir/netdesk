@@ -14,6 +14,7 @@ from pathlib import Path
 
 import serial
 import netdesk as n
+from netdesk_serial_ownership import PortLease
 
 # Session-only pagination settings. FortiOS uses pager handling rather than changing console configuration.
 PAGING = {
@@ -72,16 +73,23 @@ class RedactedWriter:
             self.stream.close()
 
 
+def port_identity(port):
+    value = str(port).strip()
+    if re.fullmatch(r'COM[1-9][0-9]*', value, re.IGNORECASE):
+        return value.upper()
+    return os.path.realpath(value)
+
+
 def validate_jobs(jobs, reserved_ports=()):
     if not isinstance(jobs, list) or not 1 <= len(jobs) <= 16:
         raise ValueError('Choose between 1 and 16 serial ports.')
-    seen = {os.path.realpath(p) for p in reserved_ports}
+    seen = {port_identity(p) for p in reserved_ports}
     clean = []
     for job in jobs:
         port = str(job['port']).strip()
-        if not port.startswith('/dev/') or any(c in port for c in '\r\n\x00'):
-            raise ValueError('Choose a serial device path under /dev/.')
-        canonical = os.path.realpath(port)
+        if (not port.startswith('/dev/') and not re.fullmatch(r'COM[1-9][0-9]*', port, re.IGNORECASE)) or any(c in port for c in '\r\n\x00'):
+            raise ValueError('Choose a serial device under /dev/ or a Windows COM port (for example COM3).')
+        canonical = port_identity(port)
         if canonical in seen:
             raise ValueError(f'Port is duplicated or open in the interactive console: {port}')
         seen.add(canonical)
@@ -115,9 +123,14 @@ class SerialSession:
         self.username, self.password = credentials
         self.stop, self.log = stop, log
         self.decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
-        self.connection = serial.Serial(port=job['port'], baudrate=job['baud'], bytesize=8,
-                                        parity='N', stopbits=1, timeout=0.1, write_timeout=2,
-                                        xonxoff=False, rtscts=False, dsrdtr=False, exclusive=True)
+        self.lease = PortLease(job['port'], priority=True).acquire(timeout=5)
+        try:
+            self.connection = serial.Serial(port=job['port'], baudrate=job['baud'], bytesize=8,
+                                            parity='N', stopbits=1, timeout=0.1, write_timeout=2,
+                                            xonxoff=False, rtscts=False, dsrdtr=False, exclusive=True)
+        except Exception:
+            self.lease.release()
+            raise
 
     def send(self, text):
         if self.stop.is_set():
@@ -192,7 +205,10 @@ class SerialSession:
         raise TimeoutError('Command timed out before the device prompt returned. Partial output was preserved.')
 
     def close(self):
-        self.connection.close()
+        try:
+            self.connection.close()
+        finally:
+            self.lease.release()
 
 
 def collect_port(job, credentials, run_dir, stop, emit, login_timeout=30, timeout=1200, diagnostic_timeout=7200):

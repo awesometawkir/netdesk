@@ -14,7 +14,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QUrl, QIODevice
+from PySide6.QtCore import Qt, QTimer, QUrl, QIODevice, QLocale
 from PySide6.QtGui import QColor, QDesktopServices, QIcon, QTextCursor
 from PySide6.QtSerialPort import QSerialPort
 from PySide6.QtWidgets import (
@@ -22,34 +22,58 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QLineEdit, QPlainTextEdit, QComboBox, QSpinBox, QCheckBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QTabWidget,
     QDialog, QDialogButtonBox, QFormLayout, QMessageBox, QFileDialog, QProgressBar,
-    QSplitter, QGroupBox, QTreeWidget, QTreeWidgetItem,
+    QSplitter, QGroupBox, QTreeWidget, QTreeWidgetItem, QFrame, QButtonGroup, QScrollArea,
 )
 import netdesk as n
 import netdesk_batch as batch
+from netdesk_command_gui import CommandEdit, CommandLibrary
+from netdesk_paths import RESOURCE_ROOT, cli_command
+from netdesk_serial_ownership import PortLease
 
 STYLE = '''
 QWidget { font-family: "DejaVu Sans"; font-size: 13px; color: #24364b; }
-QMainWindow, QDialog { background: #f3f6fa; }
+QMainWindow, QDialog { background: #f4f7fb; }
 QLabel#brand { font-size: 26px; font-weight: 700; color: #0e3257; }
 QLabel#subtitle { color: #60748b; }
 QLabel#section { font-size: 19px; font-weight: 600; }
-QPushButton { background: white; border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 12px; }
+QPushButton { background: white; border: 1px solid #cbd5e1; border-radius: 9px; padding: 8px 12px; }
 QPushButton:hover { background: #e8f1fb; border-color: #6fa0cf; }
 QPushButton:disabled { color: #9ca8b6; background: #eef1f5; }
-QPushButton#primary { background: #1767b1; color: white; border-color: #1767b1; font-weight: 600; }
-QPushButton#primary:hover { background: #11548f; }
+QPushButton#primary { background: #087f8c; color: white; border-color: #087f8c; font-weight: 600; }
+QPushButton#primary:hover { background: #066570; }
 QPushButton#primary:disabled { background: #95b4d1; border-color: #95b4d1; }
-QLineEdit, QPlainTextEdit, QComboBox, QSpinBox { background: white; border: 1px solid #cbd5e1; border-radius: 5px; padding: 6px; selection-background-color: #1767b1; }
+QLineEdit, QPlainTextEdit, QComboBox, QSpinBox { background: white; border: 1px solid #cbd5e1; border-radius: 5px; padding: 6px; selection-background-color: #087f8c; }
 QTableWidget, QTreeWidget { background: white; alternate-background-color: #f5f8fc; border: 1px solid #d8e0e9; border-radius: 5px; gridline-color: #e7edf4; }
 QHeaderView::section { background: #e9eff6; border: none; padding: 9px; font-weight: 600; }
 QTabWidget::pane { border: none; }
 QTabBar::tab { padding: 12px 20px; margin-right: 5px; color: #52687f; }
-QTabBar::tab:selected { color: #1767b1; background: #e5effa; border-bottom: 3px solid #1767b1; }
+QTabBar::tab:selected { color: #087f8c; background: #def4f2; border-bottom: 3px solid #087f8c; }
 QGroupBox { border: 1px solid #d2dce8; border-radius: 7px; margin-top: 13px; padding: 15px 10px 10px; font-weight: 600; }
 QGroupBox::title { subcontrol-origin: margin; left: 12px; }
 QProgressBar { border: none; background: #dfe8f2; border-radius: 5px; text-align: center; min-height: 20px; }
 QProgressBar::chunk { background: #55a3dd; border-radius: 5px; }
+QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus { border: 1px solid #087f8c; }
+QPlainTextEdit#commandEditor { background: #122438; color: #e0f2f1; font-family: 'DejaVu Sans Mono'; padding: 12px; selection-background-color: #087f8c; }
 QPlainTextEdit#terminal { background: #101d2c; color: #d9e9f7; font-family: "DejaVu Sans Mono"; font-size: 13px; }
+QWidget#scrollPage { background: #f4f7fb; }
+QFrame#sidebar { background: #12283b; border: none; }
+QFrame#sidebar QLabel#brand { color: #f4fbff; font-size: 28px; }
+QLabel#navCaption { color: #9cb4c6; font-size: 10px; line-height: 1.5; }
+QPushButton#navigation { text-align: left; background: transparent; color: #b9cedd; border: none; padding: 13px 12px; font-weight: 600; }
+QPushButton#navigation:hover { background: #203d52; color: white; }
+QPushButton#navigation:checked { background: #087f8c; color: white; }
+QPushButton#sidebarAction { background: #1d3549; color: #dcebf4; border: 1px solid #345065; text-align: left; font-size: 11px; padding: 10px; }
+QLabel#pageTitle { font-size: 27px; font-weight: 700; color: #142e43; }
+QLabel#sessionBadge { background: #dff3ed; color: #236855; border-radius: 10px; padding: 8px 12px; font-size: 10px; font-weight: 600; }
+QFrame#actionCard, QFrame#inspector { background: white; border: 1px solid #dce5ed; border-radius: 12px; }
+QLabel#cardTitle { font-size: 14px; font-weight: 600; color: #19364d; }
+QPushButton#disclosure { background: transparent; border: none; color: #52687f; padding: 4px 0; }
+QPlainTextEdit#activity { background: #edf2f6; border: none; font-size: 11px; }
+QSplitter::handle { background: #e4ebf1; width: 6px; margin: 4px 1px; }
+QStatusBar { background: #eaf0f5; color: #60748b; font-size: 11px; }
+QTableWidget::item { padding: 6px; border-bottom: 1px solid #edf2f6; }
+QTableWidget::item:selected { background: #e0f2f0; color: #12434a; }
+
 '''
 
 
@@ -70,6 +94,8 @@ def hint(text):
 
 def spin(low, high, value):
     item = QSpinBox()
+    item.setLocale(QLocale.c())
+    item.setGroupSeparatorShown(False)
     item.setRange(low, high)
     item.setValue(value)
     return item
@@ -153,9 +179,10 @@ class ScenarioDialog(QDialog):
         form.addRow('Command preset', self.preset)
         self.preset_hint = hint('')
         form.addRow(self.preset_hint)
-        self.commands = QPlainTextEdit()
+        self.commands = CommandEdit()
         self.commands.setMaximumHeight(110)
-        form.addRow('Commands (one per line)', self.commands)
+        form.addRow('Execution preview', self.commands)
+        form.addRow(button('Browse command library / customize…', self.browse_commands))
         layout.addLayout(form)
         self.login = LoginFields(vault)
         self.login.group.setEditText('')
@@ -171,6 +198,16 @@ class ScenarioDialog(QDialog):
         self.platform.currentTextChanged.connect(self.update_presets)
         self.update_commands()
 
+    def browse_commands(self):
+        platform = self.devices[0]['device_type'] if self.devices else self.platform.currentText()
+        initial = self.commands.toPlainText().splitlines()
+        if self.devices and len({d['device_type'] for d in self.devices}) > 1:
+            initial = []
+        dialog = CommandLibrary(platform, initial, self)
+        if dialog.exec():
+            self.preset.setCurrentText('custom')
+            self.commands.setPlainText('\n'.join(dialog.commands()))
+
     def update_presets(self):
         previous = self.preset.currentText()
         choices = n.available_presets([self.platform.currentText()]) + ['custom']
@@ -183,12 +220,13 @@ class ScenarioDialog(QDialog):
 
     def update_commands(self):
         preset = self.preset.currentText()
+        self.commands.platform = self.devices[0]['device_type'] if self.devices else self.platform.currentText()
         self.preset.setToolTip(n.SCENARIOS.get(preset, 'Your own commands'))
         self.preset_hint.setText(n.SCENARIOS.get(preset, 'Your own commands') + ' • Preview below; model and firmware support may vary.')
         self.commands.setReadOnly(preset != 'custom')
         if preset != 'custom':
             if self.devices and len({d['device_type'] for d in self.devices}) > 1:
-                self.commands.setPlainText('Mixed platforms: each device uses its platform’s ' + preset + ' preset.\nChoose custom to use the same commands for all.')
+                self.commands.setPlainText('\n\n'.join('# ' + driver + '\n' + '\n'.join(n.PRESETS[driver][preset]) for driver in dict.fromkeys(d['device_type'] for d in self.devices)))
             else:
                 driver = self.devices[0]['device_type'] if self.devices else self.platform.currentText()
                 self.commands.setPlainText('\n'.join(n.PRESETS[driver][preset]))
@@ -215,29 +253,41 @@ class RangesDialog(QDialog):
     def __init__(self, existing_jobs=(), existing_groups=(), parent=None):
         super().__init__(parent)
         self.setWindowTitle('Add IP ranges with separate logins')
-        self.resize(1100, 470)
+        self.resize(1100, 620)
         self.existing_jobs = list(existing_jobs)
         self.existing_groups = set(existing_groups)
         self.jobs, self.credentials = [], {}
         layout = QVBoxLayout(self)
         layout.addWidget(hint('Each row is a separate range or single IP with its own login. Add as many rows as you need, then collect them together.'))
-        self.rows = QTableWidget(0, 6)
-        self.rows.setHorizontalHeaderLabels(['IP / range / subnet', 'Username', 'Password', 'Platform', 'Preset', 'Port'])
+        self.rows = QTableWidget(0, 7)
+        self.rows.setHorizontalHeaderLabels(['IP / range / subnet', 'Username', 'Password', 'Platform', 'Preset', 'Port', 'Remove'])
         self.rows.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.rows.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.rows.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.rows.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
         self.rows.setColumnWidth(5, 85)
+        self.rows.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
+        self.rows.setColumnWidth(6, 100)
         self.rows.verticalHeader().setDefaultSectionSize(44)
         layout.addWidget(self.rows, 1)
+        self.range_preview = CommandEdit()
+        self.range_preview.setReadOnly(True)
+        self.range_preview.setMaximumHeight(130)
+        self.preview_label = hint('Select a range to view its commands')
+        layout.addWidget(self.preview_label)
+        layout.addWidget(self.range_preview)
+        layout.addWidget(button('Browse / customize selected range commands…', self.browse_range_commands))
+        self.rows.currentCellChanged.connect(lambda *_: self.update_range_preview())
+        self.range_preview.textChanged.connect(self.save_custom_commands)
+        QApplication.instance().focusChanged.connect(self.follow_cell_focus)
         controls = QHBoxLayout()
         controls.addWidget(button('＋ Add another row', self.add_row))
-        controls.addWidget(button('Remove selected rows', self.remove_rows))
         self.shared = QCheckBox('Use the first row’s username and password for every row')
         self.shared.toggled.connect(self.update_shared)
         controls.addWidget(self.shared)
         controls.addStretch()
         layout.addLayout(controls)
-        layout.addWidget(hint('Examples: 192.168.1.1-10, 192.168.10.1-15, or one IP such as 10.0.0.5. Passwords are masked and never saved in plans. Use Add scenario for custom command lists.'))
+        layout.addWidget(hint('Examples: 192.168.1.1-10, 192.168.10.1-15, or one IP such as 10.0.0.5. Passwords are masked and never saved in plans. Choose custom to type commands below. Each row has its own Remove button.'))
         self.error = QLabel('')
         self.error.setWordWrap(True)
         self.error.setStyleSheet('color: #a12b25;')
@@ -249,6 +299,7 @@ class RangesDialog(QDialog):
         layout.addWidget(buttons)
         self.add_row()
         self.add_row()
+        self.rows.setCurrentCell(0, 0)
 
     def add_row(self):
         row = self.rows.rowCount()
@@ -258,33 +309,135 @@ class RangesDialog(QDialog):
         password.setEchoMode(QLineEdit.EchoMode.Password)
         password.setPlaceholderText('Password for this row')
         platform = combo(list(n.PRESETS))
-        presets = combo(n.available_presets(['huawei']))
+        presets = combo(n.available_presets(['huawei']) + ['custom'])
+        presets.custom_commands = []
+        presets.custom_text = None
         def update_presets():
             previous = presets.currentText()
+            presets.blockSignals(True)
             presets.clear()
-            presets.addItems(n.available_presets([platform.currentText()]))
+            presets.addItems(n.available_presets([platform.currentText()]) + ['custom'])
             presets.setCurrentText(previous if presets.findText(previous) >= 0 else 'quick')
+            presets.blockSignals(False)
+            show_commands()
         def show_commands():
             if presets.currentText():
-                presets.setToolTip('\n'.join(n.get_commands(platform.currentText(), presets.currentText())))
+                commands = presets.custom_commands if presets.currentText() == 'custom' else n.get_commands(platform.currentText(), presets.currentText())
+                presets.setToolTip('\n'.join(commands))
+                owner = self.row_for_widget(presets)
+                if owner >= 0:
+                    self.rows.setCurrentCell(owner, 4)
+                    self.update_range_preview()
         platform.currentTextChanged.connect(update_presets)
         presets.currentTextChanged.connect(show_commands)
         for column, widget in enumerate((targets, username, password, platform, presets, spin(1, 65535, 22))):
             self.rows.setCellWidget(row, column, widget)
+        remove = button('Remove', lambda: self.remove_range(targets))
+        remove.setToolTip('Remove only this range. You will see its IP before confirming.')
+        self.rows.setCellWidget(row, 6, remove)
+        targets.textChanged.connect(lambda: self.update_preview_label())
         show_commands()
         self.update_shared()
+
+    def row_for_widget(self, widget):
+        for row in range(self.rows.rowCount()):
+            for column in range(self.rows.columnCount()):
+                cell = self.rows.cellWidget(row, column)
+                if cell is not None and (widget is cell or cell.isAncestorOf(widget)):
+                    return row
+        return -1
+
+    def follow_cell_focus(self, _old, now):
+        if now is not None:
+            row = self.row_for_widget(now)
+            if row >= 0 and row != self.rows.currentRow():
+                self.rows.setCurrentCell(row, 0)
+
+    def update_preview_label(self):
+        row = self.rows.currentRow()
+        if row < 0 or self.rows.cellWidget(row, 4) is None:
+            self.preview_label.setText('Select a range to view its commands')
+            return
+        target = self.rows.cellWidget(row, 0).text().strip() or 'No IP entered'
+        custom = self.rows.cellWidget(row, 4).currentText() == 'custom'
+        mode = 'Custom commands — type here, one per line' if custom else 'Preset preview — choose custom to edit'
+        self.preview_label.setText(f'Row {row + 1} · {target} · {mode}')
+
+    def save_custom_commands(self):
+        row = self.rows.currentRow()
+        if row < 0 or self.range_preview.isReadOnly():
+            return
+        presets = self.rows.cellWidget(row, 4)
+        if presets is not None and presets.currentText() == 'custom':
+            presets.custom_text = self.range_preview.toPlainText()
+            presets.custom_commands = [line.strip() for line in presets.custom_text.splitlines()
+                                       if line.strip() and not line.lstrip().startswith('#')]
+            presets.setToolTip('\n'.join(presets.custom_commands))
+
+    def update_range_preview(self):
+        row = self.rows.currentRow()
+        self.range_preview.blockSignals(True)
+        try:
+            if row < 0 or self.rows.cellWidget(row, 4) is None:
+                self.range_preview.clear()
+                self.range_preview.setReadOnly(True)
+                return
+            presets = self.rows.cellWidget(row, 4)
+            if not presets.currentText():
+                return
+            platform = self.rows.cellWidget(row, 3).currentText()
+            custom = presets.currentText() == 'custom'
+            self.range_preview.platform = platform
+            self.range_preview.setReadOnly(not custom)
+            if custom:
+                text = presets.custom_text if presets.custom_text is not None else '\n'.join(presets.custom_commands)
+            else:
+                text = '\n'.join(n.get_commands(platform, presets.currentText()))
+            self.range_preview.setPlainText(text)
+        finally:
+            self.range_preview.blockSignals(False)
+            self.update_preview_label()
+
+    def browse_range_commands(self):
+        row = self.rows.currentRow()
+        if row < 0:
+            self.rows.setCurrentCell(0, 0)
+            row = 0
+        presets = self.rows.cellWidget(row, 4)
+        self.update_range_preview()
+        dialog = CommandLibrary(self.rows.cellWidget(row, 3).currentText(), self.range_preview.toPlainText().splitlines(), self)
+        if dialog.exec():
+            presets.custom_commands = dialog.commands()
+            presets.custom_text = '\n'.join(presets.custom_commands)
+            presets.setCurrentText('custom')
+            self.update_range_preview()
 
     def update_shared(self):
         for row in range(self.rows.rowCount()):
             for column in (1, 2):
                 self.rows.cellWidget(row, column).setEnabled(row == 0 or not self.shared.isChecked())
 
-    def remove_rows(self):
-        for row in sorted({index.row() for index in self.rows.selectionModel().selectedRows()}, reverse=True):
-            self.rows.removeRow(row)
+    def remove_range(self, target_widget):
+        # Resolve the widget now; row numbers change after another row is removed.
+        row = self.row_for_widget(target_widget)
+        if row < 0:
+            return
+        self.rows.setCurrentCell(row, 0)
+        target = target_widget.text().strip() or 'Empty range'
+        text = f'Remove row {row + 1}: {target}?'
+        if row == 0 and self.shared.isChecked() and self.rows.rowCount() > 1:
+            text += '\nThe next row will become the shared login for all remaining ranges.'
+        answer = QMessageBox.question(self, 'Remove this range?', text,
+                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                      QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.rows.removeRow(row)
         if not self.rows.rowCount():
             self.add_row()
+        self.rows.setCurrentCell(min(row, self.rows.rowCount() - 1), 0)
         self.update_shared()
+        self.update_range_preview()
 
     def build(self):
         jobs, vault = [], {}
@@ -312,6 +465,7 @@ class RangesDialog(QDialog):
             try:
                 new_jobs = batch.make_jobs(name, targets, self.rows.cellWidget(row, 3).currentText(),
                                           self.rows.cellWidget(row, 5).value(), self.rows.cellWidget(row, 4).currentText(),
+                                          commands=self.rows.cellWidget(row, 4).custom_commands if self.rows.cellWidget(row, 4).currentText() == 'custom' else None,
                                           credential_group=group)
             except ValueError as error:
                 raise ValueError(f'Row {row + 1}: {error}') from error
@@ -363,8 +517,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('NetDesk — Network collection & consoles')
-        self.setWindowIcon(QIcon(str(n.ROOT / 'assets' / 'netdesk.svg')))
-        self.resize(1260, 840)
+        self.setWindowIcon(QIcon(str(RESOURCE_ROOT / 'assets' / 'netdesk.svg')))
+        self.resize(1360, 860)
         self.setMinimumSize(1020, 720)
         self.jobs, self.vault, self.results = [], {}, {}
         self.events = queue.Queue()
@@ -373,27 +527,75 @@ class MainWindow(QMainWindow):
         self.last_run = None
         self.dirty = False
         self.busy = False
+        self.serial_lease = None
         self.serial = QSerialPort(self)
         self.serial.readyRead.connect(self.read_serial)
         self.serial.errorOccurred.connect(self.serial_error)
         self.serial_log = None
         self.serial_decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
         central = QWidget()
-        root = QVBoxLayout(central)
-        root.setContentsMargins(24, 18, 24, 18)
-        head = QHBoxLayout()
-        title = QLabel('NetDesk')
-        title.setObjectName('brand')
-        head.addWidget(title)
-        head.addWidget(hint('Network collection & consoles'), 1)
-        head.addWidget(button('Open CLI', lambda: self.terminal([str(n.ROOT / 'netdesk')])))
-        root.addLayout(head)
+        root = QHBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        sidebar = QFrame()
+        sidebar.setObjectName('sidebar')
+        sidebar.setFixedWidth(184)
+        nav = QVBoxLayout(sidebar)
+        nav.setContentsMargins(18, 26, 18, 20)
+        nav.setSpacing(10)
+        brand = QLabel('NetDesk')
+        brand.setObjectName('brand')
+        nav.addWidget(brand)
+        tagline = QLabel('NETWORK WORKSPACE')
+        tagline.setObjectName('navCaption')
+        nav.addWidget(tagline)
+        nav.addSpacing(32)
+        self.navigation = QButtonGroup(self)
+        self.navigation.setExclusive(True)
         self.tabs = QTabWidget()
-        root.addWidget(self.tabs, 1)
+        self.tabs.tabBar().hide()
+        self.nav_buttons = []
+        for index, text in enumerate(['SSH collections', 'Serial collections', 'Run history', 'SSH && tools']):
+            control = QPushButton(text)
+            control.setObjectName('navigation')
+            control.setCheckable(True)
+            self.navigation.addButton(control, index)
+            self.nav_buttons.append(control)
+            nav.addWidget(control)
+        self.navigation.idClicked.connect(self.tabs.setCurrentIndex)
+        self.tabs.currentChanged.connect(lambda index: self.nav_buttons[index].setChecked(True))
+        self.nav_buttons[0].setChecked(True)
+        nav.addStretch()
+        library = button('Command library', self.open_library)
+        library.setObjectName('sidebarAction')
+        nav.addWidget(library)
+        data_button = button('App data folder', lambda: self.open_path(n.ROOT))
+        data_button.setObjectName('sidebarAction')
+        nav.addWidget(data_button)
+        footer = QLabel('LOCAL WORKSPACE\nLogins stay in memory')
+        footer.setObjectName('navCaption')
+        nav.addSpacing(16)
+        nav.addWidget(footer)
+        root.addWidget(sidebar)
+        content = QWidget()
+        body = QVBoxLayout(content)
+        body.setContentsMargins(24, 20, 24, 18)
+        header = QHBoxLayout()
+        self.page_heading = QLabel('Collections')
+        self.page_heading.setObjectName('pageTitle')
+        header.addWidget(self.page_heading)
+        header.addStretch()
+        badge = QLabel('●  LOCAL SESSION')
+        badge.setObjectName('sessionBadge')
+        header.addWidget(badge)
+        body.addLayout(header)
+        body.addWidget(self.tabs, 1)
+        root.addWidget(content, 1)
         self.collection_tab()
         self.serial_tab()
         self.history_tab()
         self.ssh_tab()
+        self.tabs.currentChanged.connect(lambda index: self.page_heading.setText(self.nav_buttons[index].text().replace('&&', '&')))
         self.setCentralWidget(central)
         self.statusBar().showMessage('Ready • Credentials stay in memory • Existing CLI commands are available')
         self.timer = QTimer(self)
@@ -408,27 +610,43 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 18, 0, 0)
         row = QHBoxLayout()
-        label = QLabel('Collect across devices and scenarios')
+        label = QLabel('Prepare devices. Review commands. Collect.')
         label.setObjectName('section')
         row.addWidget(label, 1)
         self.count = hint('No devices yet')
-        self.count.setMinimumWidth(230)
+        self.count.setMinimumWidth(160)
         row.addWidget(self.count)
         layout.addLayout(row)
         quick = QHBoxLayout()
-        self.ranges_btn = button('＋ Add ranges && logins', self.add_ranges, True)
-        quick.addWidget(self.ranges_btn)
-        quick.addWidget(hint('Each range or single IP can have its own username and password.'), 1)
+        quick.setSpacing(12)
+        self.ranges_btn = button('Add ranges && logins', self.add_ranges, True)
+        scenario_btn = button('Add scenario', self.add_scenario)
+        self.edit_buttons = [self.ranges_btn, scenario_btn]
+        for title, description, control in [
+            ('Device ranges', 'Separate logins for each IP range.', self.ranges_btn),
+            ('Collection scenario', 'Choose devices, presets and custom commands.', scenario_btn),
+        ]:
+            card = QFrame()
+            card.setObjectName('actionCard')
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(16, 14, 16, 14)
+            label = QLabel(title)
+            label.setObjectName('cardTitle')
+            card_layout.addWidget(label)
+            card_layout.addWidget(hint(description))
+            card_layout.addWidget(control)
+            quick.addWidget(card, 1)
         layout.addLayout(quick)
         toolbar = QHBoxLayout()
-        self.edit_buttons = [self.ranges_btn]
-        for text, callback, primary in [('＋ Add scenario', self.add_scenario, False), ('Import inventory', self.import_inventory, False),
-                                        ('Assign login', self.assign_login, False), ('Edit commands', self.edit_commands, False),
-                                        ('Remove selected', self.remove_selected, False), ('Save plan', self.save_plan, False), ('Load plan', self.load_plan, False)]:
-            control = button(text, callback, primary)
+        for text, callback in [('Import', self.import_inventory), ('Load plan', self.load_plan), ('Save plan', self.save_plan)]:
+            control = button(text, callback)
             self.edit_buttons.append(control)
             toolbar.addWidget(control)
         toolbar.addStretch()
+        for text, callback in [('Login', self.assign_login), ('Commands', self.edit_commands), ('Remove', self.remove_selected)]:
+            control = button(text, callback)
+            self.edit_buttons.append(control)
+            toolbar.addWidget(control)
         layout.addLayout(toolbar)
         self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(['Scenario', 'Device / IP', 'Platform', 'Commands', 'Login group', 'Login ready', 'Status'])
@@ -437,25 +655,57 @@ class MainWindow(QMainWindow):
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().hide()
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        for column, width in enumerate([125, 165, 130, 135, 125, 110, 110]):
+            self.table.setColumnWidth(column, width)
         self.table.cellDoubleClicked.connect(lambda _r, _c: self.assign_login() if not self.busy else None)
-        layout.addWidget(self.table, 1)
+        self.table.verticalHeader().setDefaultSectionSize(54)
+        self.table.setShowGrid(False)
+        self.collection_split = QSplitter(Qt.Orientation.Horizontal)
+        self.collection_split.addWidget(self.table)
+        inspector = QFrame()
+        inspector.setObjectName('inspector')
+        inspector_layout = QVBoxLayout(inspector)
+        self.inspector_title = QLabel('Command preview')
+        self.inspector_title.setObjectName('cardTitle')
+        inspector_layout.addWidget(self.inspector_title)
+        self.inspector_hint = hint('Select a device to review its commands before collecting.')
+        inspector_layout.addWidget(self.inspector_hint)
+        self.job_preview = CommandEdit()
+        self.job_preview.setReadOnly(True)
+        self.job_preview.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.job_preview.setPlaceholderText('Your selected device’s commands will appear here.')
+        inspector_layout.addWidget(self.job_preview, 1)
+        self.collection_split.addWidget(inspector)
+        self.collection_split.setSizes([650, 270])
+        self.collection_split.setChildrenCollapsible(False)
+        layout.addWidget(self.collection_split, 1)
+        self.table.itemSelectionChanged.connect(self.update_job_preview)
         self.empty = hint('Start with “Add ranges & logins”. Enter each IP range and its own username/password, then collect all rows together.')
         layout.addWidget(self.empty)
-        settings = QHBoxLayout()
+        advanced_button = QPushButton('Connection settings  ▸')
+        advanced_button.setCheckable(True)
+        advanced_button.setObjectName('disclosure')
+        layout.addWidget(advanced_button, 0, Qt.AlignmentFlag.AlignLeft)
+        advanced = QWidget()
+        settings = QGridLayout(advanced)
+        settings.setContentsMargins(0, 2, 0, 8)
+        advanced.hide()
+        advanced_button.toggled.connect(advanced.setVisible)
+        advanced_button.toggled.connect(lambda checked: advanced_button.setText('Connection settings  ▾' if checked else 'Connection settings  ▸'))
         self.workers = spin(1, 16, 4)
         self.timeout = spin(1, 86400, 1200)
         self.diag_timeout = spin(1, 86400, 7200)
-        for label, control in [('Parallel sessions', self.workers), ('Command timeout (s)', self.timeout), ('Diagnostics timeout (s)', self.diag_timeout)]:
-            settings.addWidget(QLabel(label))
-            settings.addWidget(control)
+        for column, (label, control) in enumerate([('Parallel sessions', self.workers), ('Command timeout (s)', self.timeout), ('Diagnostics timeout (s)', self.diag_timeout)]):
+            settings.addWidget(QLabel(label), 0, column * 2)
+            settings.addWidget(control, 0, column * 2 + 1)
         self.strict = QCheckBox('Verify known SSH host keys')
-        settings.addWidget(self.strict)
-        settings.addStretch()
-        layout.addLayout(settings)
+        settings.addWidget(self.strict, 1, 0, 1, 6)
+        layout.addWidget(advanced)
         actions = QHBoxLayout()
         self.start_btn = button('Collect all devices', self.start_collection, True)
-        self.stop_btn = button('Stop after current operations', self.stop_collection)
+        self.stop_btn = button('Stop collection', self.stop_collection)
         self.stop_btn.setEnabled(False)
         self.retry_btn = button('Retry failed jobs', self.retry_failed)
         self.retry_btn.setEnabled(False)
@@ -472,10 +722,34 @@ class MainWindow(QMainWindow):
         self.activity = QPlainTextEdit()
         self.activity.setReadOnly(True)
         self.activity.setMaximumBlockCount(2000)
-        self.activity.setMaximumHeight(125)
+        self.activity.setMaximumHeight(75)
+        self.activity.setObjectName("activity")
         self.activity.setPlaceholderText('Collection progress appears here. You can keep using the app while it runs.')
         layout.addWidget(self.activity)
         self.tabs.addTab(page, 'Collections')
+
+    def add_scroll_tab(self, page, title):
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        page.setObjectName('scrollPage')
+        scroll.setWidget(page)
+        self.tabs.addTab(scroll, title)
+
+    def open_library(self):
+        CommandLibrary('huawei', parent=self).exec()
+
+    def update_job_preview(self):
+        selected = self.selected_indices()
+        if not selected or selected[0] >= len(self.jobs):
+            self.inspector_title.setText('Command preview')
+            self.inspector_hint.setText('Select a device to review its commands.')
+            self.job_preview.clear()
+            return
+        job = self.jobs[selected[0]]
+        self.inspector_title.setText(job['device']['ip'])
+        self.inspector_hint.setText(f"{len(job['commands'])} commands • run in this order")
+        self.job_preview.setPlainText('\n'.join(job['commands']))
 
     def selected_indices(self):
         return sorted({i.row() for i in self.table.selectionModel().selectedRows()})
@@ -565,17 +839,8 @@ class MainWindow(QMainWindow):
         if not selected:
             message(self, 'Select the device rows whose commands you want to change.')
             return
-        dialog = QDialog(self)
-        dialog.setWindowTitle('Commands for selected devices')
-        dialog.resize(650, 410)
-        layout = QVBoxLayout(dialog)
-        layout.addWidget(hint('One command per line. These replace the command list for every selected device. Commands run in the login CLI context.'))
-        editor = QPlainTextEdit('\n'.join(self.jobs[selected[0]]['commands']))
-        layout.addWidget(editor)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
+        dialog = CommandLibrary(self.jobs[selected[0]]['device']['device_type'], self.jobs[selected[0]]['commands'], self)
+        editor = dialog.editor
         if dialog.exec():
             commands = [x.strip() for x in editor.toPlainText().splitlines() if x.strip() and not x.lstrip().startswith('#')]
             if not commands:
@@ -738,11 +1003,18 @@ class MainWindow(QMainWindow):
             self.open_path(self.last_run)
 
     def terminal(self, args):
-        if not shutil.which('gnome-terminal'):
-            message(self, 'gnome-terminal is required for the original console tools.')
-            return
         try:
-            subprocess.Popen(['gnome-terminal', '--', *args], start_new_session=True)
+            if sys.platform != 'linux' and any(arg in ('serial', 'serialports', 'serialportsconnect') for arg in args[1:]):
+                message(self, 'The original shell wizards are Linux tools. Use Serial console or Collect multiple serial ports in this app instead.')
+                return
+            if sys.platform == 'win32':
+                subprocess.Popen(args, creationflags=subprocess.CREATE_NEW_CONSOLE)
+                return
+            for terminal, flags in [('gnome-terminal', ['--']), ('konsole', ['-e']), ('xfce4-terminal', ['-x']), ('xterm', ['-e'])]:
+                if shutil.which(terminal):
+                    subprocess.Popen([terminal, *flags, *args], start_new_session=True)
+                    return
+            message(self, 'Install a terminal (GNOME Terminal, Konsole, Xfce Terminal or xterm) for interactive SSH and CLI tools. Built-in collections and serial console work without it.')
         except OSError as error:
             message(self, error)
 
@@ -755,18 +1027,24 @@ class MainWindow(QMainWindow):
         layout.addWidget(title)
         layout.addWidget(button('Collect multiple serial ports', self.multi_serial, True))
         layout.addWidget(hint('Use the built-in text console below, or open your original serialportsconnect wizard for a full terminal session.'))
-        row = QHBoxLayout()
+        row = QGridLayout()
         self.port = QComboBox()
         self.port.setEditable(True)
-        self.port.setMinimumWidth(300)
+        self.port.setMinimumWidth(180)
         self.baud = combo(['9600', '115200', '57600', '38400', '19200'])
         self.baud.setEditable(True)
         self.serial_record = QCheckBox('Record device output')
         self.serial_record.setChecked(True)
         self.connect_btn = button('Connect', self.toggle_serial, True)
         self.refresh_port_btn = button('Refresh ports', self.refresh_ports)
-        for item in (QLabel('Port'), self.port, QLabel('Baud'), self.baud, self.serial_record, self.refresh_port_btn, self.connect_btn):
-            row.addWidget(item)
+        row.addWidget(QLabel('Port'), 0, 0)
+        row.addWidget(self.port, 0, 1, 1, 3)
+        row.addWidget(QLabel('Baud'), 0, 4)
+        row.addWidget(self.baud, 0, 5)
+        row.addWidget(self.serial_record, 1, 1)
+        row.addWidget(self.refresh_port_btn, 1, 4)
+        row.addWidget(self.connect_btn, 1, 5)
+        row.setColumnStretch(2, 1)
         layout.addLayout(row)
         self.serial_state = hint('Disconnected • 8 data bits, no parity, 1 stop bit, no flow control')
         layout.addWidget(self.serial_state)
@@ -784,25 +1062,38 @@ class MainWindow(QMainWindow):
         self.hide_input.toggled.connect(lambda checked: self.serial_input.setEchoMode(QLineEdit.EchoMode.Password if checked else QLineEdit.EchoMode.Normal))
         row.addWidget(self.serial_input, 1)
         row.addWidget(self.hide_input)
+        layout.addLayout(row)
+        row = QHBoxLayout()
+        row.addStretch()
         row.addWidget(button('Send ↵', self.send_serial))
         row.addWidget(button('Ctrl+C', lambda: self.write_serial(b'\x03')))
         row.addWidget(button('Space / more', lambda: self.write_serial(b' ')))
         layout.addLayout(row)
-        row = QHBoxLayout()
-        row.addWidget(button('Original serialportsconnect wizard', lambda: self.terminal([str(n.ROOT / 'netdesk'), 'serialportsconnect'])))
-        row.addWidget(button('Original serialports menu', lambda: self.terminal([str(n.ROOT / 'netdesk'), 'serial'])))
-        row.addWidget(button('Open serial logs', lambda: self.open_path(n.ROOT / 'logs' / 'serial')))
-        row.addWidget(button('Open original logs', lambda: self.open_path(Path.home() / 'serial-logs')))
+        row = QGridLayout()
+        row.addWidget(button('Original serial wizard', lambda: self.terminal(cli_command('serialportsconnect'))), 0, 0)
+        row.addWidget(button('Original serial menu', lambda: self.terminal(cli_command('serial'))), 0, 1)
+        row.addWidget(button('Open serial logs', lambda: self.open_path(n.ROOT / 'logs' / 'serial')), 1, 0)
+        row.addWidget(button('Open original logs', lambda: self.open_path(Path.home() / 'serial-logs')), 1, 1)
         layout.addLayout(row)
         layout.addWidget(hint('Recording saves raw received bytes, including anything the device echoes. Hidden typing only hides the local input field. Use the original wizard for full-screen terminal applications.'))
-        self.tabs.addTab(page, 'Serial ports && logs')
+        from netdesk_serial_gui import SerialBatchDialog
+        self.serial_collection = SerialBatchDialog(parent=self)
+        self.serial_collection.setWindowFlags(Qt.WindowType.Widget)
+        self.serial_collection.close_btn.hide()
+        self.serial_collection.reserved_provider = lambda: [self.port.currentText().strip()] if self.serial.isOpen() else []
+        self.serial_pages = QTabWidget()
+        self.serial_pages.addTab(self.serial_collection, 'Automatic collection')
+        manual = QScrollArea()
+        manual.setWidgetResizable(True)
+        manual.setFrameShape(QFrame.Shape.NoFrame)
+        page.setObjectName('scrollPage')
+        manual.setWidget(page)
+        self.serial_pages.addTab(manual, 'Manual console')
+        self.tabs.addTab(self.serial_pages, 'Serial collections')
 
     def multi_serial(self):
-        from netdesk_serial_gui import SerialBatchDialog
-        reserved = [self.port.currentText().strip()] if self.serial.isOpen() else []
-        dialog = SerialBatchDialog(reserved, self)
-        dialog.exec()
-        dialog.deleteLater()
+        self.serial_pages.setCurrentIndex(0)
+        self.serial_collection.refresh_ports()
 
     def refresh_ports(self):
         current = self.port.currentText()
@@ -822,10 +1113,13 @@ class MainWindow(QMainWindow):
         try:
             port = self.port.currentText().strip()
             baud = int(self.baud.currentText())
-            if not port or not Path(port).exists():
-                raise ValueError('Choose a connected serial port or enter its /dev path.')
+            if not port or (not re.fullmatch(r'COM[1-9][0-9]*', port, re.IGNORECASE) and not Path(port).exists()):
+                raise ValueError('Choose a connected serial port, COM name, or /dev path.')
+            if self.serial_collection.busy:
+                raise ValueError('Wait for serial collection to finish before opening the manual console.')
             if not 300 <= baud <= 4000000:
                 raise ValueError('Baud rate must be between 300 and 4000000.')
+            self.serial_lease = PortLease(port, priority=True).acquire(timeout=5)
             self.serial.setPortName(port)
             self.serial.setBaudRate(baud)
             self.serial.setDataBits(QSerialPort.DataBits.Data8)
@@ -854,6 +1148,9 @@ class MainWindow(QMainWindow):
         if self.serial.isOpen():
             self.read_serial()
             self.serial.close()
+        if self.serial_lease:
+            self.serial_lease.release()
+            self.serial_lease = None
         if self.serial_log:
             self.serial_log.close()
             self.serial_log = None
@@ -1053,15 +1350,15 @@ class MainWindow(QMainWindow):
         layout.addWidget(group)
         tools = QGroupBox('Existing tools && help')
         row = QVBoxLayout(tools)
-        row.addWidget(button('Open NetDesk CLI menu', lambda: self.terminal([str(n.ROOT / 'netdesk')])))
-        row.addWidget(button('Open serialportsconnect logging wizard', lambda: self.terminal([str(n.ROOT / 'netdesk'), 'serialportsconnect'])))
-        row.addWidget(button('Read the usage guide', lambda: self.open_path(n.ROOT / 'README.md')))
-        row.addWidget(button('Open project folder', lambda: self.open_path(n.ROOT)))
+        row.addWidget(button('Open NetDesk CLI menu', lambda: self.terminal(cli_command())))
+        row.addWidget(button('Open serialportsconnect logging wizard', lambda: self.terminal(cli_command('serialportsconnect'))))
+        row.addWidget(button('Read the usage guide', lambda: self.open_path(RESOURCE_ROOT / 'README.md')))
+        row.addWidget(button('Open app data folder', lambda: self.open_path(n.ROOT)))
         row.addWidget(button('Forget all session credentials', self.forget_credentials))
         layout.addWidget(tools)
         layout.addWidget(hint('SSH collection defaults to accepting unknown host keys; enable verification on Collections to require known_hosts entries. Live device compatibility depends on platform and command privileges.'))
         layout.addStretch()
-        self.tabs.addTab(page, 'SSH && tools')
+        self.add_scroll_tab(page, 'SSH && tools')
 
     def open_ssh(self):
         try:
@@ -1082,6 +1379,11 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage('Session credentials cleared. Assign logins again before collecting.')
 
     def closeEvent(self, event):
+        if self.serial_collection.busy:
+            if QMessageBox.question(self, 'Serial collection running', 'Stop serial collection? Wait for ports to close before exiting.') == QMessageBox.StandardButton.Yes:
+                self.serial_collection.cancel_run()
+            event.ignore()
+            return
         if self.busy:
             if QMessageBox.question(self, 'Collection is running', 'Stop queued jobs? Active operations must finish or time out before you can close the app.') == QMessageBox.StandardButton.Yes:
                 self.stop_collection()
@@ -1093,12 +1395,16 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
         self.disconnect_serial()
+        self.serial_collection.clear_credentials()
+        self.serial_collection.discovery_timer.stop()
+        self.serial_collection.timer.stop()
         self.vault.clear()
         event.accept()
 
 
 def main():
     os.umask(0o077)
+    QLocale.setDefault(QLocale.c())
     app = QApplication.instance() or QApplication(['netdesk-gui'])
     app.setApplicationName('NetDesk')
     app.setOrganizationName('NetDesk')

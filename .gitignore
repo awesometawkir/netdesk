@@ -20,3 +20,7 @@ AGENTS.md
 *.pem
 *.key
 .pytest_cache/
+
+# Local standalone builds
+build/
+dist/

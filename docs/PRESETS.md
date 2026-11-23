@@ -1239,3 +1239,48 @@ The installed Netmiko driver implementations and NTC templates are useful cross-
 - [PAN-OS networking CLI reference](https://docs.paloaltonetworks.com/ngfw/pan-os-cli-quick-start/cli-cheat-sheet-networking)
 - [VyOS BGP operational commands](https://docs.vyos.io/en/rolling/configuration/protocols/bgp.html)
 - [Dell OS10 routing verification](https://www.dell.com/en-us/infohub/articles/dell-emc-networking-smartfabric-services-deployment-with-vxrail-7-0-1)
+
+## Command library and Huawei CLI assistance
+
+Both **Add scenario → Browse command library / customize** and **Add ranges &
+logins → Browse / customize selected range commands** open the same library.
+Filter by category or search by command/purpose. Select a preset to append its
+whole list, or select an individual command. Duplicate additions are skipped.
+The editable preview is the exact command sequence applied when you choose
+**Use these commands**. Cancel leaves the collection unchanged. **Edit commands**
+also opens this library for selected devices.
+
+In a custom command editor, type `dis cur` and press **Tab** to complete
+`display current-configuration`. Type **?** to choose from catalog matches.
+Misspellings such as `display current-configuraion` offer corrections. Ambiguous
+matches require a choice. These are offline catalog suggestions, not the full
+VRP parser or device-provided help; arbitrary arguments and filters remain
+editable and are sent as entered. Completion never runs commands.
+
+Huawei now includes 17 additional focused presets: config_review, port_health,
+ip_interfaces, vlan_ports, mac_table, spanning_tree, discovery, arp_table,
+bgp_peers, bgp_routes, ospf_peers, ospf_interfaces, resources, inventory,
+event_logs, traps, and time_sync. Existing presets are unchanged. Commands run
+in the login CLI context; availability and privilege requirements vary by model
+and firmware. Broad diagnostics and full tables can produce substantial output.
+
+The additions reuse existing Huawei commands and add the following commands
+checked against Huawei's online troubleshooting documentation:
+
+- `display ip interface brief`, `display port vlan`: [Checking the Interface Type, VLAN ID, and IP Addresses](https://info.support.huawei.com/network/ptmngsys/Web/tsrev_s/en/content/s/10_edesk_Ping_Fail/edesk_Ping_Fail_edesk001.html).
+- `display lldp neighbor brief`: [Checking Whether the Link Status Is Normal](https://info.support.huawei.com/network/ptmngsys/Web/tsrev_ce/en/content/ce/13_edesk_dc_fail_to_ping_remote/edesk_dc_fail_to_ping_remote_edesk002.html).
+- `display ntp-service status`: [Checking Whether the NTP Status Is Normal](https://info.support.huawei.com/network/ptmngsys/Web/tsrev_s/en/content/s/37_edesk_ntp_clock_synchronization_fails/edesk_ntp_clock_synchronization_fails_edesk001.html).
+
+No real network device was used to validate these additions.
+
+### Editing commands for an IP range
+
+In **Add ranges & logins**, choose **custom** in a row's Preset field, then type
+in the command editor directly below the table. Its heading identifies the row
+number and IP range. Clicking another row's input switches the editor to that
+row; custom drafts stay with their own ranges, including when you temporarily
+switch to a built-in preset. Tab completion and `?` suggestions work here too.
+
+Use the **Remove** button on the range itself. The confirmation identifies the
+row and IP range, and defaults to keeping it. Removing the first row while shared
+login is enabled also explains that the next row becomes the shared login.
