@@ -90,7 +90,8 @@ class GuiTests(unittest.TestCase):
         self.assertFalse(self.window.busy)
         self.assertEqual(self.window.progress.value(), 2)
         self.assertEqual(self.window.run_tree.topLevelItemCount(), 1)
-        self.assertEqual(self.window.table.item(0, 6).text(), 'ok')
+        self.assertEqual(self.window.table.item(0, 6).text(), 'Done ✓')
+        self.assertEqual(self.window.ticked_jobs(), [])
         self.assertFalse(self.window.retry_btn.isEnabled())
         self.window.grab().save('/tmp/netdesk-collection-tested.png')
 

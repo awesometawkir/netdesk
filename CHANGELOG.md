@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Stop now closes open SSH sessions immediately (partial logs kept); closing the app during a run stops and exits cleanly.
+- A device that sends nothing for a set time (default 180 s, diagnostics at least 15 min) is closed and marked "Timed out" instead of hanging the run.
+- One automatic reconnect for transient SSH channel errors such as "Unable to open channel" (never after commands started, never for unreachable hosts or bad logins).
+- New session button; adding devices after a finished run asks "Start fresh" or "Keep them and add" (kept devices are unticked).
+- Run tick boxes: only ticked devices are collected; successful devices are unticked after a run. Per-device "Stop selected device".
+- Review screen lists every device, username and command before anything connects; plain-language status column and a result banner.
+- Run history shows abandoned runs as "interrupted" instead of "running".
+- Plain-language connection errors (unreachable, refused session, host key, unknown prompt) instead of long library text.
+- Only one NetDesk window can run at a time; unexpected errors show a dialog and are logged to `logs/netdesk-gui-errors.log` instead of silently breaking.
+- Progress updates can no longer freeze the window; a dead collection thread unlocks the UI. "Quit now" option if closing waits on connecting devices.
+- Review screen warns when the same device is listed more than once; custom rows with no commands get a clear message.
+
 - Added concurrent serial login and command collection for up to 16 ports, with per-port settings/credentials, presets and custom commands.
 - Added a multi-port GUI and `netdesk serial-collect`, separate output folders, credential-filtered transcripts, partial output, cancellation, and duplicate/busy-port checks.
 - Added virtual-device tests for three concurrent ports, login rejection, pagers, timeout/cancellation, disconnects and GUI progress.
