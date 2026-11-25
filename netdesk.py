@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -152,19 +153,69 @@ def commands_for(device, preset, custom=None):
     return custom or get_commands(device['device_type'], preset)
 
 
+LONG_COMMAND_WORDS = ('diagnostic-information', 'tech-support', 'support information')
+
+
+def _abort_connection(connection):
+    """Close the SSH transport so a blocked read returns at once."""
+    for name in ('remote_conn', 'remote_conn_pre'):
+        handle = getattr(connection, name, None)
+        try:
+            if handle is not None:
+                handle.close()
+        except Exception:
+            pass
+
+
+FRIENDLY_ERRORS = [
+    ('tcp connection to device failed', 'Cannot reach the device on this port. Check the IP, VPN/route and firewall.'),
+    ('timed out', 'The device did not answer in time. Check the IP, VPN/route and firewall.'),
+    ('unable to open channel', 'The device refused a new SSH session (often too many sessions open). NetDesk retried once; try again shortly.'),
+    ('error reading ssh protocol banner', 'The device accepted the connection but did not start SSH. It may be busy or not running SSH on this port.'),
+    ('no existing session', 'The SSH session could not start. Check that SSH is enabled for this user.'),
+    ('connection refused', 'The device refused the connection. SSH may be disabled or on another port.'),
+    ('no route to host', 'No network route to this device. Check VPN/route.'),
+    ('host key', 'The SSH host key is unknown or changed. Turn off host key verification or update known_hosts.'),
+    ('pattern not detected', 'The device prompt was not recognized. Check the platform chosen for this device.'),
+]
+
+
+def friendly_error(error):
+    text = str(error).lower()
+    for needle, plain in FRIENDLY_ERRORS:
+        if needle in text:
+            return plain
+    first = str(error).strip().splitlines()[0] if str(error).strip() else type(error).__name__
+    return first[:200]
+
+
+def _retryable_connect_error(error):
+    text = str(error).lower()
+    return any(word in text for word in ('unable to open channel', 'error reading ssh protocol banner',
+                                          'connection reset', 'ssh session not active', 'eof during negotiation'))
+
+
 def collect_one(device, commands, run_dir, username, password, timeout=1200,
-                diagnostic_timeout=7200, strict=False, stop=None, folder_key=None, on_event=None):
-    """One session per worker; never replay commands automatically after a failure."""
+                diagnostic_timeout=7200, strict=False, stop=None, folder_key=None, on_event=None,
+                idle_timeout=180, connect_attempts=2):
+    """One session per worker; never replay commands automatically after a failure.
+
+    A watchdog closes the session when Stop is pressed, or when the device sends nothing
+    for ``idle_timeout`` seconds while a command runs (0 disables the silence check).
+    """
     stop = stop or threading.Event()
     key = slug(device['name']) + '__' + slug(device['ip']) + '_' + str(device['port'])
     if folder_key is not None:
         key = slug(folder_key) + '__' + key
     folder = run_dir / key
     folder.mkdir()
+    log_path = folder / 'session.log'
     result = {'device': device, 'status': 'running', 'commands': [], 'folder': key, 'started': stamp()}
     connection = None
     stage = 'connecting'
     secret_values = [password] if password else []
+    state = {'connection': None, 'command_started': None, 'long': False, 'abort': None}
+    finished = threading.Event()
 
     def clean_error(error):
         message = str(error)
@@ -172,18 +223,54 @@ def collect_one(device, commands, run_dir, username, password, timeout=1200,
             message = message.replace(value, '[redacted]')
         return message
 
+    def watchdog():
+        last_size, last_change = -1, time.monotonic()
+        while not finished.wait(0.5):
+            if stop.is_set():
+                state['abort'] = state['abort'] or 'cancelled'
+            elif idle_timeout and state['command_started'] is not None:
+                try:
+                    size = log_path.stat().st_size
+                except OSError:
+                    size = last_size
+                now = time.monotonic()
+                if size != last_size:
+                    last_size, last_change = size, now
+                limit = max(idle_timeout, 900) if state['long'] else idle_timeout
+                if now - max(last_change, state['command_started']) > limit:
+                    state['abort'] = state['abort'] or f'silent for {limit} seconds'
+            if state['abort'] and state['connection'] is not None:
+                _abort_connection(state['connection'])
+                return
+
+    guard = threading.Thread(target=watchdog, name='netdesk-watchdog', daemon=True)
+    guard.start()
     try:
         if stop.is_set():
             result['status'] = 'cancelled'
             return result
-        if on_event:
-            on_event('connecting', '')
-        connection = ConnectHandler(
-            device_type=device['device_type'], host=device['ip'], port=device['port'],
-            username=username, password=password, conn_timeout=20, auth_timeout=20,
-            banner_timeout=20, fast_cli=False, ssh_strict=strict, system_host_keys=True,
-            session_log=str(folder / 'session.log'), session_log_record_writes=False,
-        )
+        for attempt in range(1, connect_attempts + 1):
+            if on_event:
+                on_event('connecting', '' if attempt == 1 else f'reconnecting (attempt {attempt})')
+            try:
+                connection = ConnectHandler(
+                    device_type=device['device_type'], host=device['ip'], port=device['port'],
+                    username=username, password=password, conn_timeout=20, auth_timeout=20,
+                    banner_timeout=20, fast_cli=False, ssh_strict=strict, system_host_keys=True,
+                    session_log=str(log_path), session_log_record_writes=False,
+                )
+                break
+            except NetmikoAuthenticationException:
+                raise
+            except Exception as error:
+                if attempt >= connect_attempts or stop.is_set() or not _retryable_connect_error(error):
+                    raise
+                if stop.wait(3):
+                    raise
+        state['connection'] = connection
+        if stop.is_set():
+            state['abort'] = 'cancelled'
+            raise ReadTimeout('cancelled')
         # Each vendor driver performs its own session paging setup.
         for index, command in enumerate(commands, 1):
             if stop.is_set():
@@ -191,17 +278,20 @@ def collect_one(device, commands, run_dir, username, password, timeout=1200,
                 break
             stage = command
             if on_event:
-                on_event('running', command)
+                on_event('running', f'[{index}/{len(commands)}] {command}')
             entry = {'command': command, 'status': 'running', 'started': stamp()}
             result['commands'].append(entry)
             console.print(f"  {device['ip']}  [{index}/{len(commands)}] {command}")
+            is_long = any(word in command for word in LONG_COMMAND_WORDS)
+            state['long'] = is_long
+            state['command_started'] = time.monotonic()
             prompt = connection.find_prompt()
-            is_long = any(word in command for word in ('diagnostic-information', 'tech-support', 'support information'))
             output = connection.send_command(
                 command, expect_string=r'(?m)^' + re.escape(prompt.strip()) + r'\s*$',
                 read_timeout=diagnostic_timeout if is_long else timeout,
                 strip_prompt=True, strip_command=True, cmd_verify=False,
             )
+            state['command_started'] = None
             output_path = folder / f'{index:02d}-{slug(command)}.txt'
             output_path.write_text(output + '\n', encoding='utf-8')
             entry.update(status='command_error' if CLI_ERROR.search(output) else 'ok', file=output_path.name, finished=stamp())
@@ -211,19 +301,26 @@ def collect_one(device, commands, run_dir, username, password, timeout=1200,
         else:
             result['status'] = 'ok' if all(c['status'] == 'ok' for c in result['commands']) else 'command_error'
     except NetmikoAuthenticationException:
-        result.update(status='authentication_failed', error='Authentication rejected. Check credentials and device access policy.')
-    except ReadTimeout:
-        result.update(status='timeout', error=f'Prompt did not return while running: {stage}. Partial output is in session.log. No commands were retried.')
+        result.update(status='authentication_failed', error='Login rejected. Check the username/password and device access policy.')
     except Exception as error:
-        result.update(status='failed', error=f'{stage}: {clean_error(error)}')
+        if state['abort'] == 'cancelled' or (stop.is_set() and state['abort'] is None):
+            result.update(status='cancelled', error=f'Stopped by you while running: {stage}. Partial output is in session.log.')
+        elif state['abort']:
+            result.update(status='timeout', error=f'Device was {state["abort"]} while running: {stage}. Session closed; partial output is in session.log.')
+        elif isinstance(error, ReadTimeout):
+            result.update(status='timeout', error=f'Prompt did not return while running: {stage}. Partial output is in session.log. No commands were retried.')
+        else:
+            result.update(status='failed', error=clean_error(friendly_error(error)) if stage == 'connecting'
+                          else f'While running {stage}: {clean_error(friendly_error(error))}')
     finally:
+        finished.set()
         if result['commands'] and result['commands'][-1]['status'] == 'running':
             result['commands'][-1]['status'] = result['status']
         if connection is not None:
             try:
                 connection.disconnect()
             except Exception:
-                pass
+                _abort_connection(connection)
         result['finished'] = stamp()
         atomic_json(folder / 'result.json', result)
     return result

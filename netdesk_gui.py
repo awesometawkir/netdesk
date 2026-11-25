@@ -64,6 +64,8 @@ QPushButton#navigation:hover { background: #203d52; color: white; }
 QPushButton#navigation:checked { background: #087f8c; color: white; }
 QPushButton#sidebarAction { background: #1d3549; color: #dcebf4; border: 1px solid #345065; text-align: left; font-size: 11px; padding: 10px; }
 QLabel#pageTitle { font-size: 27px; font-weight: 700; color: #142e43; }
+QLabel#banner { background: #e7f5ef; color: #1d5c47; border: 1px solid #b9dfcf; border-radius: 8px; padding: 10px 12px; font-weight: 600; }
+QLabel#banner[warn="true"] { background: #fdf1e4; color: #8a4510; border-color: #f0cfa7; }
 QLabel#sessionBadge { background: #dff3ed; color: #236855; border-radius: 10px; padding: 8px 12px; font-size: 10px; font-weight: 600; }
 QFrame#actionCard, QFrame#inspector { background: white; border: 1px solid #dce5ed; border-radius: 12px; }
 QLabel#cardTitle { font-size: 14px; font-weight: 600; color: #19364d; }
@@ -109,6 +111,75 @@ def combo(items):
 
 def message(parent, text):
     QMessageBox.warning(parent, 'NetDesk', str(text))
+
+
+STATUS_TEXT = {
+    'planned': 'Planned', 'waiting': 'Waiting in queue', 'connecting': 'Connecting…', 'running': 'Running',
+    'ok': 'Done ✓', 'command_error': 'Done · some commands errored', 'authentication_failed': 'Login failed',
+    'timeout': 'Timed out', 'cancelled': 'Stopped', 'failed': 'Failed',
+}
+STATUS_COLOR = {'ok': '#18765c', 'command_error': '#b45b0b', 'cancelled': '#60748b',
+                'waiting': '#60748b', 'connecting': '#1f6fb2', 'running': '#1f6fb2'}
+FINAL_STATES = {'ok', 'command_error', 'authentication_failed', 'timeout', 'cancelled', 'failed'}
+
+
+def status_text(result):
+    status = result.get('status', 'planned')
+    text = STATUS_TEXT.get(status, status)
+    if status == 'running' and result.get('detail'):
+        text = 'Running ' + result['detail']
+    elif status == 'connecting' and result.get('detail'):
+        text = 'Connecting… ' + result['detail']
+    return text
+
+
+class ReviewDialog(QDialog):
+    """Shows exactly which devices and commands will run before anything connects."""
+    def __init__(self, jobs, vault, workers, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('Review before collecting')
+        self.resize(980, 560)
+        layout = QVBoxLayout(self)
+        title = QLabel(f"Collect {len(jobs)} device{'s' if len(jobs) != 1 else ''}?")
+        title.setObjectName('section')
+        layout.addWidget(title)
+        layout.addWidget(hint(f'Only the devices listed here will be contacted, up to {workers} at a time. '
+                              'Each command below is sent exactly as shown. Untick devices in the main list to leave them out.'))
+        table = QTableWidget(len(jobs), 4)
+        table.setHorizontalHeaderLabels(['Device', 'Group', 'Username', 'Commands that will run'])
+        table.verticalHeader().hide()
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setWordWrap(True)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        for row, job in enumerate(jobs):
+            device = job['device']
+            values = [f"{device['ip']}:{device['port']}", job['scenario'], vault.get(job['credential_group'], ('',))[0],
+                      '\n'.join(job['commands'])]
+            for column, value in enumerate(values):
+                table.setItem(row, column, QTableWidgetItem(value))
+        table.resizeRowsToContents()
+        layout.addWidget(table, 1)
+        counts = {}
+        for job in jobs:
+            key = (job['device']['ip'], job['device']['port'])
+            counts[key] = counts.get(key, 0) + 1
+        repeated = [f'{ip}:{port} ×{count}' for (ip, port), count in counts.items() if count > 1]
+        if repeated:
+            warn = QLabel('⚠ These devices are listed more than once and will be collected once per row (one after another): '
+                          + ', '.join(repeated) + '. Go back and untick the extra rows if this is not intended.')
+            warn.setObjectName('banner')
+            warn.setProperty('warn', True)
+            warn.setWordWrap(True)
+            layout.addWidget(warn)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(f'Start collecting {len(jobs)}')
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setObjectName('primary')
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText('Go back')
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setDefault(True)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
 
 
 class LoginFields(QWidget):
@@ -355,7 +426,7 @@ class RangesDialog(QDialog):
 
     def update_preview_label(self):
         row = self.rows.currentRow()
-        if row < 0 or self.rows.cellWidget(row, 4) is None:
+        if row < 0 or self.rows.cellWidget(row, 4) is None or self.rows.cellWidget(row, 0) is None:
             self.preview_label.setText('Select a range to view its commands')
             return
         target = self.rows.cellWidget(row, 0).text().strip() or 'No IP entered'
@@ -439,6 +510,14 @@ class RangesDialog(QDialog):
         self.update_shared()
         self.update_range_preview()
 
+    def custom_for_row(self, row):
+        presets = self.rows.cellWidget(row, 4)
+        if presets.currentText() != 'custom':
+            return None
+        if not presets.custom_commands:
+            raise ValueError(f'Row {row + 1}: you chose custom commands but did not type any. Type at least one command, or pick a preset.')
+        return presets.custom_commands
+
     def build(self):
         jobs, vault = [], {}
         used_names = {j['scenario'] for j in self.existing_jobs}
@@ -465,7 +544,7 @@ class RangesDialog(QDialog):
             try:
                 new_jobs = batch.make_jobs(name, targets, self.rows.cellWidget(row, 3).currentText(),
                                           self.rows.cellWidget(row, 5).value(), self.rows.cellWidget(row, 4).currentText(),
-                                          commands=self.rows.cellWidget(row, 4).custom_commands if self.rows.cellWidget(row, 4).currentText() == 'custom' else None,
+                                          commands=self.custom_for_row(row),
                                           credential_group=group)
             except ValueError as error:
                 raise ValueError(f'Row {row + 1}: {error}') from error
@@ -527,6 +606,10 @@ class MainWindow(QMainWindow):
         self.last_run = None
         self.dirty = False
         self.busy = False
+        self.excluded = set()
+        self.cancel_events = {}
+        self.active_ids = set()
+        self.close_after_stop = False
         self.serial_lease = None
         self.serial = QSerialPort(self)
         self.serial.readyRead.connect(self.read_serial)
@@ -638,18 +721,24 @@ class MainWindow(QMainWindow):
             quick.addWidget(card, 1)
         layout.addLayout(quick)
         toolbar = QHBoxLayout()
+        new_session = button('＋ New session', self.new_session)
+        new_session.setToolTip('Clear the device list, results and logins to start a fresh collection. Saved logs stay on disk.')
+        self.edit_buttons.append(new_session)
+        toolbar.addWidget(new_session)
         for text, callback in [('Import', self.import_inventory), ('Load plan', self.load_plan), ('Save plan', self.save_plan)]:
             control = button(text, callback)
             self.edit_buttons.append(control)
             toolbar.addWidget(control)
         toolbar.addStretch()
-        for text, callback in [('Login', self.assign_login), ('Commands', self.edit_commands), ('Remove', self.remove_selected)]:
+        for text, callback in [('Tick all', lambda: self.set_ticked(True)), ('Untick all', lambda: self.set_ticked(False)),
+                               ('Login', self.assign_login), ('Commands', self.edit_commands), ('Remove', self.remove_selected)]:
             control = button(text, callback)
             self.edit_buttons.append(control)
             toolbar.addWidget(control)
         layout.addLayout(toolbar)
         self.table = QTableWidget(0, 7)
-        self.table.setHorizontalHeaderLabels(['Scenario', 'Device / IP', 'Platform', 'Commands', 'Login group', 'Login ready', 'Status'])
+        self.table.setHorizontalHeaderLabels(['Run', 'Group', 'Device / IP', 'Platform', 'Commands', 'Login', 'Status'])
+        self.table.horizontalHeaderItem(0).setToolTip('Only ticked devices are collected.')
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -657,9 +746,10 @@ class MainWindow(QMainWindow):
         self.table.verticalHeader().hide()
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self.table.horizontalHeader().setStretchLastSection(True)
-        for column, width in enumerate([125, 165, 130, 135, 125, 110, 110]):
+        for column, width in enumerate([44, 90, 150, 80, 125, 100, 160]):
             self.table.setColumnWidth(column, width)
-        self.table.cellDoubleClicked.connect(lambda _r, _c: self.assign_login() if not self.busy else None)
+        self.table.cellDoubleClicked.connect(lambda _r, c: self.assign_login() if not self.busy and c != 0 else None)
+        self.table.itemChanged.connect(self.tick_changed)
         self.table.verticalHeader().setDefaultSectionSize(54)
         self.table.setShowGrid(False)
         self.collection_split = QSplitter(Qt.Orientation.Horizontal)
@@ -682,7 +772,7 @@ class MainWindow(QMainWindow):
         self.collection_split.setChildrenCollapsible(False)
         layout.addWidget(self.collection_split, 1)
         self.table.itemSelectionChanged.connect(self.update_job_preview)
-        self.empty = hint('Start with “Add ranges & logins”. Enter each IP range and its own username/password, then collect all rows together.')
+        self.empty = hint('Start with “Add ranges & logins”: enter each IP or range with its username and password, then click Collect. Use “New session” any time to start over.')
         layout.addWidget(self.empty)
         advanced_button = QPushButton('Connection settings  ▸')
         advanced_button.setCheckable(True)
@@ -697,21 +787,36 @@ class MainWindow(QMainWindow):
         self.workers = spin(1, 16, 4)
         self.timeout = spin(1, 86400, 1200)
         self.diag_timeout = spin(1, 86400, 7200)
+        self.idle_timeout = spin(0, 86400, 180)
+        self.idle_timeout.setSpecialValueText('Never')
+        self.idle_timeout.setToolTip('If a device sends nothing for this long, NetDesk closes it, keeps the partial log and moves on. '
+                                     'Diagnostic commands get at least 15 minutes. 0 = never.')
         for column, (label, control) in enumerate([('Parallel sessions', self.workers), ('Command timeout (s)', self.timeout), ('Diagnostics timeout (s)', self.diag_timeout)]):
             settings.addWidget(QLabel(label), 0, column * 2)
             settings.addWidget(control, 0, column * 2 + 1)
+        settings.addWidget(QLabel('Give up on a silent device after (s)'), 1, 0, 1, 3)
+        settings.addWidget(self.idle_timeout, 1, 3)
         self.strict = QCheckBox('Verify known SSH host keys')
-        settings.addWidget(self.strict, 1, 0, 1, 6)
+        settings.addWidget(self.strict, 2, 0, 1, 6)
         layout.addWidget(advanced)
+        self.result_banner = QLabel('')
+        self.result_banner.setObjectName('banner')
+        self.result_banner.setWordWrap(True)
+        self.result_banner.hide()
+        layout.addWidget(self.result_banner)
         actions = QHBoxLayout()
-        self.start_btn = button('Collect all devices', self.start_collection, True)
-        self.stop_btn = button('Stop collection', self.stop_collection)
+        self.start_btn = button('Collect devices', self.start_collection, True)
+        self.stop_btn = button('Stop all', self.stop_collection)
+        self.stop_btn.setToolTip('Closes every open device session now. Partial logs are kept.')
         self.stop_btn.setEnabled(False)
+        self.skip_btn = button('Stop selected device', self.skip_selected)
+        self.skip_btn.setToolTip('Stop only the selected device(s); the others keep running.')
+        self.skip_btn.setEnabled(False)
         self.retry_btn = button('Retry failed jobs', self.retry_failed)
         self.retry_btn.setEnabled(False)
         self.open_run_btn = button('Open output folder', self.open_last_run)
         self.open_run_btn.setEnabled(False)
-        for b in (self.start_btn, self.stop_btn, self.retry_btn, self.open_run_btn):
+        for b in (self.start_btn, self.stop_btn, self.skip_btn, self.retry_btn, self.open_run_btn):
             actions.addWidget(b)
         actions.addStretch()
         layout.addLayout(actions)
@@ -754,27 +859,105 @@ class MainWindow(QMainWindow):
     def selected_indices(self):
         return sorted({i.row() for i in self.table.selectionModel().selectedRows()})
 
+    def ticked_jobs(self):
+        return [j for j in self.jobs if j['id'] not in self.excluded]
+
     def refresh_table(self):
+        self.table.blockSignals(True)
         self.table.setRowCount(len(self.jobs))
         for row, job in enumerate(self.jobs):
             device = job['device']
             ready = job['credential_group'] in self.vault
             result = self.results.get(job['id'], {})
+            status = result.get('status', 'planned')
+            tick = QTableWidgetItem('')
+            tick.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            tick.setCheckState(Qt.CheckState.Unchecked if job['id'] in self.excluded else Qt.CheckState.Checked)
+            tick.setToolTip('Ticked devices are collected. Untick to leave this device out.')
+            self.table.setItem(row, 0, tick)
+            login = self.vault[job['credential_group']][0] if ready else 'Needs login'
             values = [job['scenario'], f"{device['name']}\n{device['ip']}:{device['port']}" if device['name'] != device['ip'] else f"{device['ip']}:{device['port']}",
-                      device['device_type'], f"{job['preset']} · {len(job['commands'])} " + ("command" if len(job['commands']) == 1 else "commands"), job['credential_group'],
-                      'Ready' if ready else 'Needs login', result.get('status', 'Planned')]
-            for column, value in enumerate(values):
+                      device['device_type'], f"{job['preset']} · {len(job['commands'])} " + ("command" if len(job['commands']) == 1 else "commands"),
+                      login, status_text(result)]
+            for column, value in enumerate(values, 1):
                 item = QTableWidgetItem(value)
-                item.setToolTip('\n'.join(job['commands']) if column == 3 else result.get('error', value))
+                item.setToolTip('\n'.join(job['commands']) if column == 4 else
+                                f"Login group: {job['credential_group']}" if column == 5 else result.get('error', value))
                 if column == 5:
                     item.setForeground(QColor('#18765c' if ready else '#b45b0b'))
-                if column == 6 and result.get('status'):
-                    item.setForeground(QColor('#18765c' if result['status'] == 'ok' else '#a34b1a'))
+                if column == 6 and status != 'planned':
+                    item.setForeground(QColor(STATUS_COLOR.get(status, '#a34b1a')))
                 self.table.setItem(row, column, item)
             self.table.setRowHeight(row, 48)
-        self.count.setText(f"{len(self.jobs)} device jobs · {len(set(j['scenario'] for j in self.jobs))} scenarios")
+        self.table.blockSignals(False)
+        ticked = len(self.ticked_jobs())
+        self.count.setText(f"{ticked} of {len(self.jobs)} devices ticked" if self.jobs else 'No devices yet')
         self.empty.setVisible(not self.jobs)
-        self.start_btn.setEnabled(bool(self.jobs) and not self.busy)
+        self.start_btn.setText(f"Collect {ticked} device{'s' if ticked != 1 else ''}" if self.jobs else 'Collect devices')
+        self.start_btn.setEnabled(bool(ticked) and not self.busy)
+
+    def tick_changed(self, item):
+        if item.column() != 0 or item.row() >= len(self.jobs):
+            return
+        job_id = self.jobs[item.row()]['id']
+        if item.checkState() == Qt.CheckState.Checked:
+            self.excluded.discard(job_id)
+        else:
+            self.excluded.add(job_id)
+        self.refresh_table()
+
+    def set_ticked(self, ticked):
+        self.excluded = set() if ticked else {j['id'] for j in self.jobs}
+        self.refresh_table()
+
+    def new_session(self, ask=True):
+        if self.busy:
+            message(self, 'Stop or wait for the current collection before starting a new session.')
+            return False
+        if ask and (self.jobs or self.vault):
+            box = QMessageBox(self)
+            box.setWindowTitle('Start a new session?')
+            box.setText(f'Clear the {len(self.jobs)} device(s), their results and the logins you entered?')
+            box.setInformativeText('Logs already collected stay saved on disk (see Run history).'
+                                   + (' Your current list is not saved as a plan.' if self.dirty and self.jobs else ''))
+            box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
+            box.button(QMessageBox.StandardButton.Yes).setText('Start new session')
+            box.setDefaultButton(QMessageBox.StandardButton.Yes)
+            if box.exec() != QMessageBox.StandardButton.Yes:
+                return False
+        self.jobs, self.results, self.excluded, self.active_ids = [], {}, set(), set()
+        self.vault.clear()
+        self.dirty = False
+        self.retry_btn.setEnabled(False)
+        self.result_banner.hide()
+        self.activity.clear()
+        self.progress.setRange(0, 1)
+        self.progress.setValue(0)
+        self.refresh_table()
+        self.statusBar().showMessage('New session started. Add devices to collect.')
+        return True
+
+    def prepare_to_add(self):
+        """Ask before mixing new devices into a list that was already collected."""
+        if not self.jobs or not any(j['id'] in self.results for j in self.jobs):
+            return True
+        box = QMessageBox(self)
+        box.setWindowTitle('Previous devices are still listed')
+        box.setText(f'Your list still has {len(self.jobs)} device(s) from the last collection.')
+        box.setInformativeText('Start fresh to collect only the devices you add now, or keep the old ones in the list as well.')
+        fresh = box.addButton('Start fresh', QMessageBox.ButtonRole.AcceptRole)
+        keep = box.addButton('Keep them and add', QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(fresh)
+        box.exec()
+        if box.clickedButton() is fresh:
+            return self.new_session(ask=False)
+        if box.clickedButton() is keep:
+            # Old devices stay visible but unticked so they do not run again by accident.
+            self.excluded |= {j['id'] for j in self.jobs}
+            self.refresh_table()
+            return True
+        return False
 
     def accept_scenario(self, dialog):
         if len(self.jobs) + len(dialog.jobs) > 1024:
@@ -788,15 +971,20 @@ class MainWindow(QMainWindow):
         self.refresh_table()
 
     def add_ranges(self):
+        if not self.prepare_to_add():
+            return
         dialog = RangesDialog(self.jobs, self.vault, self)
         if dialog.exec():
             self.jobs.extend(dialog.jobs)
             self.vault.update(dialog.credentials)
             self.dirty = True
             self.refresh_table()
-            self.statusBar().showMessage(f'Added {len(dialog.jobs)} device jobs with {len(dialog.credentials)} login groups. Review and click Collect all devices.')
+            self.result_banner.hide()
+            self.statusBar().showMessage(f'Added {len(dialog.jobs)} device(s). Review the ticked devices, then click Collect.')
 
     def add_scenario(self):
+        if not self.prepare_to_add():
+            return
         dialog = ScenarioDialog(self.vault, parent=self)
         if dialog.exec():
             try:
@@ -806,7 +994,7 @@ class MainWindow(QMainWindow):
 
     def import_inventory(self):
         path, _ = QFileDialog.getOpenFileName(self, 'Import a device inventory', str(n.GROUPS), 'CSV files (*.csv)')
-        if not path:
+        if not path or not self.prepare_to_add():
             return
         try:
             devices = n.load_inventory(path)
@@ -854,6 +1042,7 @@ class MainWindow(QMainWindow):
 
     def remove_selected(self):
         for row in reversed(self.selected_indices()):
+            self.excluded.discard(self.jobs[row]['id'])
             del self.jobs[row]
         self.dirty = True
         self.refresh_table()
@@ -878,6 +1067,7 @@ class MainWindow(QMainWindow):
             return False
         self.jobs = batch.validate_jobs(jobs)
         self.results.clear()
+        self.excluded.clear()
         self.dirty = False
         self.refresh_table()
         return True
@@ -893,22 +1083,17 @@ class MainWindow(QMainWindow):
     def start_collection(self, jobs=None):
         if self.busy:
             return
-        jobs = jobs if jobs is not None else self.jobs
+        jobs = jobs if jobs is not None else self.ticked_jobs()
+        if not jobs:
+            message(self, 'Tick at least one device to collect.')
+            return
         try:
             jobs = batch.validate_jobs(jobs)
             batch.validate_credentials(jobs, self.vault)
         except (ValueError, KeyError) as error:
             message(self, error)
             return
-        preview = '\n\n'.join(f"{j['scenario']} — {j['device']['ip']}:{j['device']['port']} — login group {j['credential_group']}\n" + '\n'.join(j['commands']) for j in jobs)
-        confirm = QMessageBox(self)
-        confirm.setWindowTitle('Review collection')
-        confirm.setText(f"Collect {len(jobs)} device jobs across {len(set(j['scenario'] for j in jobs))} scenarios?")
-        confirm.setInformativeText(f'Up to {self.workers.value()} devices at once. Credentials are not saved. Expand Details to review every target and command.')
-        confirm.setDetailedText(preview)
-        confirm.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
-        confirm.setDefaultButton(QMessageBox.StandardButton.Cancel)
-        if confirm.exec() != QMessageBox.StandardButton.Yes:
+        if not ReviewDialog(jobs, self.vault, self.workers.value(), self).exec():
             return
         self.launch_collection(jobs)
 
@@ -918,16 +1103,20 @@ class MainWindow(QMainWindow):
         self.stop = threading.Event()
         self.results = {k: v for k, v in self.results.items() if k not in {j['id'] for j in jobs}}
         self.active_ids = {j['id'] for j in jobs}
+        self.cancel_events = {j['id']: threading.Event() for j in jobs}
+        self.result_banner.hide()
         self.progress.setRange(0, len(jobs))
         self.progress.setValue(0)
         self.activity.clear()
         self.activity.appendPlainText('Starting collection. Same-device scenarios run sequentially; different devices run in parallel.')
         self.stop_btn.setEnabled(True)
+        self.skip_btn.setEnabled(True)
         self.retry_btn.setEnabled(False)
-        for control in self.edit_buttons + [self.workers, self.timeout, self.diag_timeout, self.strict]:
+        for control in self.edit_buttons + [self.workers, self.timeout, self.diag_timeout, self.idle_timeout, self.strict]:
             control.setEnabled(False)
         vault = {group: self.vault[group] for group in {j['credential_group'] for j in jobs}}
-        options = {'workers': self.workers.value(), 'timeout': self.timeout.value(), 'diagnostic_timeout': self.diag_timeout.value(), 'strict': self.strict.isChecked()}
+        options = {'workers': self.workers.value(), 'timeout': self.timeout.value(), 'diagnostic_timeout': self.diag_timeout.value(),
+                   'strict': self.strict.isChecked(), 'idle_timeout': self.idle_timeout.value(), 'cancel': self.cancel_events}
         self.refresh_table()
         def work():
             try:
@@ -943,9 +1132,36 @@ class MainWindow(QMainWindow):
     def stop_collection(self):
         self.stop.set()
         self.stop_btn.setEnabled(False)
-        self.activity.appendPlainText('Stop requested. Queued jobs will not connect; active operations must finish or time out.')
+        self.skip_btn.setEnabled(False)
+        self.activity.appendPlainText('Stopping: closing open device sessions. Partial logs are kept.')
+        self.statusBar().showMessage('Stopping… devices still connecting can take up to 20 seconds.')
+
+    def skip_selected(self):
+        if not self.busy:
+            return
+        rows = self.selected_indices()
+        names = []
+        for row in rows:
+            job = self.jobs[row]
+            event = self.cancel_events.get(job['id'])
+            if event and self.results.get(job['id'], {}).get('status') not in FINAL_STATES:
+                event.set()
+                names.append(job['device']['ip'])
+        if names:
+            self.activity.appendPlainText('Stopping only: ' + ', '.join(names))
+        else:
+            message(self, 'Select a device row that is still waiting or running.')
 
     def poll(self):
+        try:
+            self._poll()
+        except Exception:
+            log_exception('Error while updating collection progress')
+        # Safety net: if the worker thread died without reporting, unlock the window.
+        if self.busy and self.worker is not None and not self.worker.is_alive() and self.events.empty():
+            self.events.put({'type': 'fatal', 'error': 'The collection stopped unexpectedly. Partial logs are saved; check Run history.'})
+
+    def _poll(self):
         changed = False
         for _ in range(200):
             try:
@@ -958,36 +1174,54 @@ class MainWindow(QMainWindow):
                 self.open_run_btn.setEnabled(True)
                 self.activity.appendPlainText('Output: ' + event['path'])
             elif kind == 'progress':
-                self.results[event['id']] = {'status': event['status']}
-                if event['detail']:
-                    job = next(j for j in self.jobs if j['id'] == event['id'])
+                self.results[event['id']] = {'status': event['status'], 'detail': event['detail']}
+                job = next((j for j in self.jobs if j['id'] == event['id']), None)
+                if event['detail'] and job:
                     self.activity.appendPlainText(f"{job['scenario']} / {job['device']['ip']}: {event['detail']}")
                 changed = True
             elif kind == 'result':
                 result = event['result']
                 self.results[result['job_id']] = result
                 self.progress.setValue(event['done'])
-                self.activity.appendPlainText(f"{result['scenario']} / {result['device']['ip']}: {result['status']}" + (f" — {result['error']}" if result.get('error') else ''))
+                self.activity.appendPlainText(f"{result['scenario']} / {result['device']['ip']}: {STATUS_TEXT.get(result['status'], result['status'])}" + (f" — {result['error']}" if result.get('error') else ''))
                 changed = True
             elif kind in ('finished', 'fatal'):
                 self.busy = False
                 self.stop_btn.setEnabled(False)
-                for control in self.edit_buttons + [self.workers, self.timeout, self.diag_timeout, self.strict]:
+                self.skip_btn.setEnabled(False)
+                self.cancel_events = {}
+                for control in self.edit_buttons + [self.workers, self.timeout, self.diag_timeout, self.idle_timeout, self.strict]:
                     control.setEnabled(True)
-                self.retry_btn.setEnabled(any(self.results.get(i, {}).get('status') != 'ok' for i in self.active_ids))
+                failed = [i for i in self.active_ids if self.results.get(i, {}).get('status') != 'ok']
+                self.retry_btn.setEnabled(bool(failed))
+                # Successful devices are unticked so the next Collect does not repeat them by accident.
+                self.excluded |= {i for i in self.active_ids if self.results.get(i, {}).get('status') == 'ok'}
                 if kind == 'finished':
                     data = event['summary']
                     ok = sum(r['status'] == 'ok' for r in data['results'])
                     self.activity.appendPlainText(f"Collection {data['status']}: {ok}/{len(data['results'])} successful. Logs are saved.")
+                    text = f"Finished: {ok} of {len(data['results'])} device(s) collected."
+                    if failed:
+                        text += f" {len(failed)} did not finish — hover the Status column for the reason, then use Retry failed."
+                    text += ' Start a new session or add more devices when you are ready.'
                 else:
                     self.activity.appendPlainText(event['error'])
+                    text = event['error']
+                self.result_banner.setText(text)
+                self.result_banner.setProperty('warn', bool(failed) or kind == 'fatal')
+                self.result_banner.style().unpolish(self.result_banner)
+                self.result_banner.style().polish(self.result_banner)
+                self.result_banner.show()
+                self.statusBar().showMessage(text)
                 self.refresh_history()
                 changed = True
+                if self.close_after_stop:
+                    QTimer.singleShot(0, self.close)
         if changed:
             self.refresh_table()
 
     def retry_failed(self):
-        jobs = [j for j in self.jobs if j['id'] in getattr(self, 'active_ids', set()) and self.results.get(j['id'], {}).get('status') != 'ok']
+        jobs = [j for j in self.jobs if j['id'] in self.active_ids and self.results.get(j['id'], {}).get('status') != 'ok']
         if jobs:
             self.start_collection(jobs)
 
@@ -1246,7 +1480,10 @@ class MainWindow(QMainWindow):
             try:
                 data = n.read_summary(path)
                 ok = sum(r['status'] == 'ok' for r in data['results'])
-                item = QTreeWidgetItem([path.parent.name, f"{ok}/{len(data['devices'])}", data['status']])
+                status = data['status']
+                if status == 'running' and not (self.busy and self.last_run == path.parent):
+                    status = 'interrupted'
+                item = QTreeWidgetItem([path.parent.name, f"{ok}/{len(data['devices'])}", status])
                 item.setData(0, Qt.ItemDataRole.UserRole, str(path.parent))
                 self.run_tree.addTopLevelItem(item)
             except (ValueError, KeyError, OSError):
@@ -1384,12 +1621,30 @@ class MainWindow(QMainWindow):
                 self.serial_collection.cancel_run()
             event.ignore()
             return
-        if self.busy:
-            if QMessageBox.question(self, 'Collection is running', 'Stop queued jobs? Active operations must finish or time out before you can close the app.') == QMessageBox.StandardButton.Yes:
-                self.stop_collection()
+        if self.busy and self.close_after_stop:
+            box = QMessageBox(self)
+            box.setWindowTitle('Still closing device sessions')
+            box.setText('NetDesk is waiting for devices that are still connecting (up to about 20 seconds).')
+            box.setInformativeText('Quit now? Logs already received are saved; devices still connecting are abandoned.')
+            quit_now = box.addButton('Quit now', QMessageBox.ButtonRole.DestructiveRole)
+            box.addButton('Keep waiting', QMessageBox.ButtonRole.RejectRole)
+            box.exec()
+            if box.clickedButton() is quit_now:
+                self.vault.clear()
+                os._exit(0)
             event.ignore()
             return
-        if self.dirty and self.jobs:
+        if self.busy:
+            if QMessageBox.question(
+                    self, 'Collection is running',
+                    'Stop the collection and close NetDesk? Open device sessions are closed and partial logs are kept.') == QMessageBox.StandardButton.Yes:
+                self.close_after_stop = True
+                if not self.stop.is_set():
+                    self.stop_collection()
+                self.statusBar().showMessage('Closing as soon as device sessions are closed…')
+            event.ignore()
+            return
+        if self.dirty and self.jobs and not self.close_after_stop:
             answer = QMessageBox.question(self, 'Unsaved collection plan', 'Close without saving the plan? Login credentials are never saved.')
             if answer != QMessageBox.StandardButton.Yes:
                 event.ignore()
@@ -1402,10 +1657,52 @@ class MainWindow(QMainWindow):
         event.accept()
 
 
+def error_log_path():
+    return n.ROOT / 'logs' / 'netdesk-gui-errors.log'
+
+
+def log_exception(context, exc_info=None):
+    """Write tracebacks to a local log; never include credentials (they are not in tracebacks' locals)."""
+    import traceback
+    exc_info = exc_info or sys.exc_info()
+    try:
+        path = error_log_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open('a', encoding='utf-8') as stream:
+            stream.write(f'\n[{datetime.now():%Y-%m-%d %H:%M:%S}] {context}\n')
+            stream.write(''.join(traceback.format_exception(*exc_info)))
+    except OSError:
+        pass
+    traceback.print_exception(*exc_info)
+
+
+def install_error_hook(app):
+    def hook(kind, value, tb):
+        if issubclass(kind, KeyboardInterrupt):
+            sys.__excepthook__(kind, value, tb)
+            return
+        log_exception('Unexpected error', (kind, value, tb))
+        try:
+            QMessageBox.warning(app.activeWindow(), 'NetDesk hit a problem',
+                                f'Something went wrong ({kind.__name__}). NetDesk is still running and your list is unchanged.\n\n'
+                                f'Details were saved to:\n{error_log_path()}')
+        except Exception:
+            pass
+    sys.excepthook = hook
+
+
 def main():
     os.umask(0o077)
     QLocale.setDefault(QLocale.c())
     app = QApplication.instance() or QApplication(['netdesk-gui'])
+    from PySide6.QtCore import QLockFile
+    n.ROOT.mkdir(parents=True, exist_ok=True)
+    lock = QLockFile(str(n.ROOT / '.netdesk-gui.lock'))
+    lock.setStaleLockTime(0)
+    if not lock.tryLock(200):
+        QMessageBox.information(None, 'NetDesk', 'NetDesk is already open. Use the existing window (check your taskbar).')
+        return 0
+    install_error_hook(app)
     app.setApplicationName('NetDesk')
     app.setOrganizationName('NetDesk')
     app.setDesktopFileName('netdesk')
@@ -1413,7 +1710,10 @@ def main():
     app.setStyleSheet(STYLE)
     window = MainWindow()
     window.show()
-    return app.exec()
+    try:
+        return app.exec()
+    finally:
+        lock.unlock()
 
 
 if __name__ == '__main__':

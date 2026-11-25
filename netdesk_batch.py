@@ -5,6 +5,7 @@ import csv
 import json
 import os
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -93,11 +94,29 @@ def validate_credentials(jobs, vault):
         raise ValueError('Enter a username and password for these login groups: ' + ', '.join(missing))
 
 
+class AnyEvent:
+    """Read-only view that is set when any of the given events is set."""
+    def __init__(self, *events):
+        self.events = events
+
+    def is_set(self):
+        return any(e.is_set() for e in self.events)
+
+    def wait(self, timeout=None):
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while not self.is_set():
+            if deadline is not None and time.monotonic() >= deadline:
+                return False
+            time.sleep(0.1)
+        return True
+
+
 def run_batch(jobs, vault, workers=4, timeout=1200, diagnostic_timeout=7200, strict=False,
-              stop=None, on_event=None, runs_dir=None):
+              stop=None, on_event=None, runs_dir=None, idle_timeout=180, cancel=None):
+    """``cancel`` maps job id -> threading.Event to stop one device without stopping the run."""
     jobs = validate_jobs(jobs)
     validate_credentials(jobs, vault)
-    if not 1 <= workers <= 16 or not 1 <= timeout <= 86400 or not 1 <= diagnostic_timeout <= 86400:
+    if not 1 <= workers <= 16 or not 1 <= timeout <= 86400 or not 1 <= diagnostic_timeout <= 86400 or not 0 <= idle_timeout <= 86400:
         raise ValueError('Use 1–16 workers and timeouts from 1–86400 seconds.')
     stop = stop or threading.Event()
     emit = on_event or (lambda event: None)
@@ -116,10 +135,11 @@ def run_batch(jobs, vault, workers=4, timeout=1200, diagnostic_timeout=7200, str
     def execute(job):
         device = job['device']
         lock = locks[(device['ip'], device['port'])]
+        job_stop = AnyEvent(stop, cancel[job['id']]) if cancel and job['id'] in cancel else stop
         acquired = False
         try:
             emit({'type': 'progress', 'id': job['id'], 'status': 'waiting', 'detail': ''})
-            while not stop.is_set():
+            while not job_stop.is_set():
                 acquired = lock.acquire(timeout=0.2)
                 if acquired:
                     break
@@ -127,8 +147,8 @@ def run_batch(jobs, vault, workers=4, timeout=1200, diagnostic_timeout=7200, str
             def progress(status, detail):
                 emit({'type': 'progress', 'id': job['id'], 'status': status, 'detail': detail})
             result = n.collect_one(device, job['commands'], run_dir, username, password,
-                                   timeout, diagnostic_timeout, strict, stop,
-                                   folder_key=job['id'], on_event=progress)
+                                   timeout, diagnostic_timeout, strict, job_stop,
+                                   folder_key=job['id'], on_event=progress, idle_timeout=idle_timeout)
             result.update(job_id=job['id'], scenario=job['scenario'], credential_group=job['credential_group'])
             n.atomic_json(run_dir / result['folder'] / 'result.json', result)
             return result
